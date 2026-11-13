@@ -71,13 +71,13 @@ const BRIDGE_LEN = MOAT.outer - 11 + 4; // Zugbrücke vom Tor bis übers Wasser
 const HUD_COIN = { x: 250, y: 34 };
 
 const ENEMY_TYPES = {
-  goblin: { hp: 3,  speed: 55, dmg: 2, coins: 1, r: 11, body: '#63b33c', dark: '#2f6a1a' },
-  ork:    { hp: 7,  speed: 38, dmg: 4, coins: 2, r: 15, body: '#9a8636', dark: '#4d4218' },
-  troll:  { hp: 22, speed: 24, dmg: 9, coins: 5, r: 21, body: '#7d8fa6', dark: '#435468' },
+  goblin: { hp: 3,  speed: 55, dmg: 2, coins: 2, r: 11, body: '#63b33c', dark: '#2f6a1a' },
+  ork:    { hp: 7,  speed: 38, dmg: 4, coins: 4, r: 15, body: '#9a8636', dark: '#4d4218' },
+  troll:  { hp: 22, speed: 24, dmg: 9, coins: 10, r: 21, body: '#7d8fa6', dark: '#435468' },
 };
 const SQUAD_SIZE = 10;     // Kämpfer pro Haus
 const SQUAD_KILLS = 20;    // nach so vielen Siegen verschwinden sie
-const SQUAD_COLORS = ['#3b7dd8', '#9b4fc4'];
+const SQUAD_COLORS = ['#3b7dd8', '#9b4fc4', '#e0662f'];
 
 const UPGRADES = [
   { id: 'wall',    ico: '🧱', nm: 'Dickere Mauern',   base: 10, mult: 1.35 },
@@ -101,8 +101,9 @@ function newGame() {
     queue: [], spawnCd: 0, betweenTimer: 2.5, inWave: false,
     towerCd: [0.5, 0.9, 1.3, 0.2],
     houses: [
-      { x: 445, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 0 },
-      { x: 555, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 1 },
+      { x: 422, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 0 },
+      { x: 500, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 1 },
+      { x: 578, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 2 },
     ],
     banner: { text: 'Mach dich bereit!', t: 2.5 }, shake: 0, time: 0,
   };
@@ -269,7 +270,7 @@ function update(dt) {
     } else if (S.enemies.length === 0) {
       S.inWave = false;
       S.betweenTimer = 5;
-      const bonus = 3 + S.wave * 2;
+      const bonus = 5 + S.wave * 4;
       S.coins += bonus;
       S.banner = { text: 'Welle geschafft! +' + bonus + ' Münzen', t: 3 };
     }
@@ -708,7 +709,7 @@ function drawEnemy(e) {
 function wallThick() { return 16 + Math.min(S.lv.wall, 6) * 4; }
 function towerH() { return Math.min(S.lv.arrow, 6) * 6; }
 function knightScale() { return 1 + Math.min(S.lv.soldier, 6) * 0.1; }
-const SQUAD_DARK = ['#1f4f99', '#5e2b80'];
+const SQUAD_DARK = ['#1f4f99', '#5e2b80', '#9a3a14'];
 function drawSoldier(s) {
   const col = SQUAD_COLORS[s.house.id], dark = SQUAD_DARK[s.house.id];
   const moving = s.lx !== undefined && Math.hypot(s.x - s.lx, s.y - s.ly) > 0.05;
