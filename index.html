@@ -283,7 +283,7 @@ function update(dt) {
       if (h.spawnCd <= 0) {
         h.toSpawn--; h.spawnCd = 0.25;
         const idx = SQUAD_SIZE - 1 - h.toSpawn;
-        S.soldiers.push({ house: h, x: h.x, y: h.y + 18, r: 9, hp: S.soldierHp, maxHp: S.soldierHp,
+        S.soldiers.push({ house: h, x: h.x, y: h.y + 18, r: 12, hp: S.soldierHp, maxHp: S.soldierHp,
           path: [{ x: h.x, y: 445 }, { x: GATE.x + rnd(-10, 10), y: GATE.y + 2 }, { x: GATE.x + rnd(-8, 8), y: GATE.y + 40 }, { x: GATE.x + rnd(-14, 14), y: GATE.y + MOAT.outer + 18 }],
           atkCd: 0, swing: 0, dir: Math.PI / 2, idx, dead: false });
       }
@@ -313,8 +313,8 @@ function update(dt) {
       }
     } else {
       // Wache vor dem Tor
-      const gx = GATE.x + (s.idx - 4.5) * 20;
-      const gy = GATE.y + MOAT.outer + 30 + s.house.id * 22;
+      const gx = GATE.x + (s.idx - 4.5) * 26;
+      const gy = GATE.y + MOAT.outer + 34 + s.house.id * 30;
       walkAround(s, gx, gy, 60, dt);
     }
     // nicht durch die Mauer laufen
@@ -652,24 +652,82 @@ function drawEnemy(e) {
   ctx.restore();
   if (e.hp < e.maxHp) hpBar(e.x, e.y - e.r - 12, e.r * 2, e.hp / e.maxHp, '#e84a3c');
 }
+const SQUAD_DARK = ['#1f4f99', '#5e2b80'];
 function drawSoldier(s) {
-  const col = SQUAD_COLORS[s.house.id];
+  const col = SQUAD_COLORS[s.house.id], dark = SQUAD_DARK[s.house.id];
+  const moving = s.lx !== undefined && Math.hypot(s.x - s.lx, s.y - s.ly) > 0.05;
+  s.lx = s.x; s.ly = s.y;
+  const t = S.time * 12 + s.idx;
+  const bob = moving ? Math.abs(Math.sin(t)) * -2 : 0;
+  const flip = Math.cos(s.dir) < 0 ? -1 : 1;
   ctx.save(); ctx.translate(s.x, s.y);
-  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(1, 7, 8, 3, 0, 0, Math.PI * 2); ctx.fill();
-  // Schwert
-  const sa = s.dir + (s.swing > 0 ? -0.9 + (0.2 - s.swing) * 9 : 0.5);
-  ctx.strokeStyle = '#e6e9ee'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(Math.cos(sa) * 6, Math.sin(sa) * 6); ctx.lineTo(Math.cos(sa) * 19, Math.sin(sa) * 19); ctx.stroke();
-  // Körper
-  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(0, 0, s.r, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 2; ctx.stroke();
-  // Helm
-  ctx.fillStyle = '#c9ced6'; ctx.beginPath(); ctx.arc(0, -2, s.r * 0.75, Math.PI, 0); ctx.fill();
-  ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(0, -s.r * 0.85, 2.5, 0, Math.PI * 2); ctx.fill();
-  // Gesicht
-  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-3, 1, 1.8, 0, Math.PI * 2); ctx.arc(3, 1, 1.8, 0, Math.PI * 2); ctx.fill();
+  // Schatten
+  ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(1, 10, 10, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.translate(0, bob);
+
+  // Umhang (weht nach hinten)
+  ctx.save(); ctx.scale(flip, 1);
+  const wave = Math.sin(S.time * 8 + s.idx) * 2 + (moving ? -3 : 0);
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.moveTo(-6, -4); ctx.lineTo(6, -4);
+  ctx.quadraticCurveTo(10 + wave * 0.3, 6, 8 + wave, 13);
+  ctx.lineTo(3 + wave, 11); ctx.lineTo(-1 + wave, 14); ctx.lineTo(-5 + wave, 11); ctx.lineTo(-10 + wave, 13);
+  ctx.quadraticCurveTo(-10, 4, -6, -4); ctx.closePath(); ctx.fill();
   ctx.restore();
-  if (s.hp < s.maxHp) hpBar(s.x, s.y - 16, 18, s.hp / s.maxHp, '#4ad66d');
+
+  // Schwert (mit Schwung-Spur beim Zuschlagen)
+  const sa = s.dir + (s.swing > 0 ? -1.1 + (0.2 - s.swing) * 11 : 0.6);
+  if (s.swing > 0) {
+    ctx.strokeStyle = 'rgba(255,255,255,' + (s.swing * 4) + ')'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(0, 0, 21, sa - 1.3, sa); ctx.stroke();
+  }
+  const cx = Math.cos(sa), cy = Math.sin(sa);
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#5a3a1a'; ctx.lineWidth = 3;   // Griff
+  ctx.beginPath(); ctx.moveTo(cx * 5, cy * 5); ctx.lineTo(cx * 9, cy * 9); ctx.stroke();
+  ctx.strokeStyle = '#ffcf3f'; ctx.lineWidth = 3;   // Parierstange
+  ctx.beginPath(); ctx.moveTo(cx * 9 - cy * 5, cy * 9 + cx * 5); ctx.lineTo(cx * 9 + cy * 5, cy * 9 - cx * 5); ctx.stroke();
+  ctx.strokeStyle = '#eef2f6'; ctx.lineWidth = 3.5;  // Klinge
+  ctx.beginPath(); ctx.moveTo(cx * 10, cy * 10); ctx.lineTo(cx * 25, cy * 25); ctx.stroke();
+  ctx.strokeStyle = '#9aa6b2'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx * 11, cy * 11); ctx.lineTo(cx * 23, cy * 23); ctx.stroke();
+
+  // Rüstung
+  ctx.fillStyle = '#cfd6de'; ctx.beginPath(); ctx.arc(0, 2, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#5f6b78'; ctx.lineWidth = 1.8; ctx.stroke();
+  // Wappenrock in Teamfarbe mit Goldgürtel
+  ctx.fillStyle = col; ctx.fillRect(-4, -2, 8, 11);
+  ctx.fillStyle = '#ffcf3f'; ctx.fillRect(-5, 4, 10, 2);
+
+  // Schild mit Stern
+  ctx.save(); ctx.scale(flip, 1); ctx.translate(-8, 3);
+  ctx.fillStyle = col; ctx.strokeStyle = '#ffcf3f'; ctx.lineWidth = 1.8;
+  ctx.beginPath(); ctx.moveTo(-5, -6); ctx.lineTo(5, -6); ctx.lineTo(5, 1); ctx.quadraticCurveTo(5, 6, 0, 8); ctx.quadraticCurveTo(-5, 6, -5, 1); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? 1.4 : 3.3; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  // Helm mit Visier und Federbusch
+  ctx.save(); ctx.scale(flip, 1);
+  const sway = Math.sin(S.time * 6 + s.idx) * 1.5 + (moving ? 2 : 0);
+  ctx.strokeStyle = '#e63946'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(0, -13); ctx.quadraticCurveTo(-6, -21 - sway * 0.5, -12 - sway, -12); ctx.stroke();
+  ctx.strokeStyle = '#ffcf3f'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(0, -13); ctx.quadraticCurveTo(-6, -20 - sway * 0.5, -11 - sway, -12); ctx.stroke();
+  ctx.fillStyle = '#e4e9ef'; ctx.beginPath(); ctx.arc(0, -6, 7.5, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#5f6b78'; ctx.lineWidth = 1.8; ctx.stroke();
+  ctx.fillStyle = '#1d232b'; ctx.fillRect(-4, -7.5, 9, 3);              // Visierschlitz
+  ctx.fillStyle = '#9fe8ff'; ctx.fillRect(0, -7, 2, 2); ctx.fillRect(3, -7, 2, 2); // leuchtende Augen
+  ctx.strokeStyle = '#5f6b78'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(1, -4); ctx.lineTo(1, 0); ctx.stroke();
+  ctx.fillStyle = '#ffcf3f'; ctx.beginPath(); ctx.arc(0, -13, 2, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+  if (s.hp < s.maxHp) hpBar(s.x, s.y - 24, 20, s.hp / s.maxHp, '#4ad66d');
 }
 function hpBar(x, y, w, f, col) {
   ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(x - w / 2 - 1, y - 1, w + 2, 6);
