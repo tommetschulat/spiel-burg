@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Burg-Spiel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#2f5d34; --panel:#3b2a1a; --text:#fff8e7; --gold:#ffcf3f;
+  --btn:#7a5230; --btn-hi:#94653a; --btn-off:#4f4134; --accent:#e8573c;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#1d3a21; } }
+:root[data-theme="dark"]{ --bg:#1d3a21; }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  font-family:'Fredoka',system-ui,-apple-system,'Segoe UI',sans-serif;overflow:hidden;
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
+  -webkit-tap-highlight-color:transparent}
+#app{display:flex;flex-direction:column;height:100%;height:100dvh}
+#stage{flex:1;position:relative;min-height:0;display:flex;align-items:center;justify-content:center;padding:8px}
+canvas{display:block;border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.35);cursor:crosshair}
+#bar{display:flex;gap:8px;padding:8px 16px calc(8px + env(safe-area-inset-bottom));
+  background:var(--panel);justify-content:center;flex-wrap:wrap}
+.up{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:104px;padding:6px 10px;
+  border:0;border-radius:12px;background:var(--btn);color:var(--text);font:inherit;cursor:pointer;
+  box-shadow:0 3px 0 rgba(0,0,0,.35);transition:transform .08s,background .15s}
+.up:active{transform:translateY(2px);box-shadow:0 1px 0 rgba(0,0,0,.35)}
+.up:hover:not(:disabled){background:var(--btn-hi)}
+.up:disabled{background:var(--btn-off);opacity:.65;cursor:default}
+.up .ico{font-size:22px;line-height:1}
+.up .nm{font-size:14px;font-weight:600;white-space:nowrap}
+.up .cost{font-size:13px;color:var(--gold);font-weight:700}
+.up .lv{font-size:11px;opacity:.8}
+#pauseBtn{position:absolute;top:16px;right:16px;width:44px;height:44px;border-radius:50%;border:0;
+  background:rgba(0,0,0,.45);color:#fff;font-size:20px;cursor:pointer;display:none}
+#overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(10,20,10,.55);padding:16px}
+#overlay.hidden{display:none}
+.card{background:#fff8e7;color:#3b2a1a;border-radius:20px;padding:24px 28px;max-width:440px;width:100%;
+  text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+.card h1{margin:0 0 4px;font-size:40px;color:#8b3a1e}
+.card .sub{margin:0 0 16px;font-size:16px;opacity:.75}
+.card ul{text-align:left;margin:0 0 20px;padding-left:20px;line-height:1.5;font-size:16px}
+.card .big{display:inline-block;border:0;border-radius:14px;background:var(--accent);color:#fff;
+  font:inherit;font-size:24px;font-weight:700;padding:12px 36px;cursor:pointer;box-shadow:0 4px 0 #9c3420}
+.card .big:active{transform:translateY(2px);box-shadow:0 2px 0 #9c3420}
+.card .stat{font-size:20px;margin:6px 0}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <button id="pauseBtn" aria-label="Pause">⏸</button>
+    <div id="overlay"></div>
+  </div>
+  <div id="bar"></div>
+</div>
+
+<script>
+'use strict';
+// ====== Spielwelt ======
+const W = 1000, H = 700;
+const WALL = { l: 370, r: 630, t: 220, b: 480 };
+const GATE = { x: 500, y: 480, w: 56 };
+const TOWERS = [[370, 220], [630, 220], [370, 480], [630, 480]];
+const HUD_COIN = { x: 250, y: 34 };
+
+const ENEMY_TYPES = {
+  goblin: { hp: 3,  speed: 55, dmg: 2, coins: 1, r: 11, body: '#63b33c', dark: '#2f6a1a' },
+  ork:    { hp: 7,  speed: 38, dmg: 4, coins: 2, r: 15, body: '#9a8636', dark: '#4d4218' },
+  troll:  { hp: 22, speed: 24, dmg: 9, coins: 5, r: 21, body: '#7d8fa6', dark: '#435468' },
+};
+const SQUAD_SIZE = 10;     // Kämpfer pro Haus
+const SQUAD_KILLS = 20;    // nach so vielen Siegen verschwinden sie
+const SQUAD_COLORS = ['#3b7dd8', '#9b4fc4'];
+
+const UPGRADES = [
+  { id: 'wall',    ico: '🧱', nm: 'Dickere Mauern',   base: 15, mult: 1.5 },
+  { id: 'arrow',   ico: '🏹', nm: 'Bessere Pfeile',   base: 20, mult: 1.6 },
+  { id: 'speed',   ico: '⚡', nm: 'Schnellere Pfeile', base: 20, mult: 1.6 },
+  { id: 'soldier', ico: '⚔️', nm: 'Stärkere Kämpfer', base: 25, mult: 1.6 },
+  { id: 'repair',  ico: '🔧', nm: 'Burg reparieren',  base: 10, mult: 1.25 },
+];
+
+let S = null;            // Spielzustand
+let phase = 'start';     // start | play | pause | over
+let best = 0;
+try { best = +localStorage.getItem('burg-best') || 0; } catch (e) {}
+
+function newGame() {
+  S = {
+    coins: 0, wave: 0, hp: 100, maxHp: 100,
+    arrowDmg: 1, arrowInterval: 1.6, soldierDmg: 1, soldierHp: 10,
+    lv: { wall: 0, arrow: 0, speed: 0, soldier: 0, repair: 0 },
+    enemies: [], arrows: [], coinsOnGround: [], soldiers: [], fx: [], texts: [],
+    queue: [], spawnCd: 0, betweenTimer: 2.5, inWave: false,
+    towerCd: [0.5, 0.9, 1.3, 0.2],
+    houses: [
+      { x: 445, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 0 },
+      { x: 555, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 1 },
+    ],
+    banner: { text: 'Mach dich bereit!', t: 2.5 }, shake: 0, time: 0,
+  };
+}
+
+// ====== Hilfsfunktionen ======
+const rnd = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function wallPoint(p) { return { x: clamp(p.x, WALL.l, WALL.r), y: clamp(p.y, WALL.t, WALL.b) }; }
+// Prüft, ob die Strecke a->b durch die (vergrößerte) Burg geht
+function crossesCastle(ax, ay, bx, by, m) {
+  const l = WALL.l - m, r = WALL.r + m, t = WALL.t - m, b = WALL.b + m;
+  let t0 = 0, t1 = 1; const dx = bx - ax, dy = by - ay;
+  const p = [-dx, dx, -dy, dy], q = [ax - l, r - ax, ay - t, b - ay];
+  for (let i = 0; i < 4; i++) {
+    if (p[i] === 0) { if (q[i] < 0) return false; continue; }
+    const v = q[i] / p[i];
+    if (p[i] < 0) { if (v > t1) return false; if (v > t0) t0 = v; }
+    else { if (v < t0) return false; if (v < t1) t1 = v; }
+  }
+  return t0 < t1;
+}
+// Läuft um die Burg herum statt durch die Mauer
+function walkAround(o, tx, ty, speed, dt) {
+  if (!crossesCastle(o.x, o.y, tx, ty, 12)) return moveTo(o, tx, ty, speed, dt);
+  const m = 24;
+  const corners = [[WALL.l - m, WALL.t - m], [WALL.r + m, WALL.t - m], [WALL.l - m, WALL.b + m], [WALL.r + m, WALL.b + m]];
+  let best = null, bd = 1e9;
+  for (const [cx, cy] of corners) {
+    if (Math.hypot(cx - o.x, cy - o.y) < 3) continue;
+    if (crossesCastle(o.x, o.y, cx, cy, 12)) continue;
+    const d = Math.hypot(cx - o.x, cy - o.y) + Math.hypot(tx - cx, ty - cy);
+    if (d < bd) { bd = d; best = [cx, cy]; }
+  }
+  if (!best) return moveTo(o, tx, ty, speed, dt);
+  moveTo(o, best[0], best[1], speed, dt);
+  return false;
+}
+function moveTo(o, tx, ty, speed, dt) {
+  const dx = tx - o.x, dy = ty - o.y, d = Math.hypot(dx, dy);
+  if (d < 0.5) return true;
+  const step = Math.min(d, speed * dt);
+  o.x += dx / d * step; o.y += dy / d * step;
+  o.dir = Math.atan2(dy, dx);
+  return step >= d;
+}
+function addText(x, y, text, color) { S.texts.push({ x, y, text, color: color || '#fff', t: 0 }); }
+function puff(x, y, color, n) {
+  for (let i = 0; i < (n || 10); i++) {
+    const a = rnd(0, Math.PI * 2), s = rnd(30, 120);
+    S.fx.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0, life: rnd(0.3, 0.6), color, r: rnd(2, 5) });
+  }
+}
+
+// ====== Wellen ======
+function startWave() {
+  S.wave++;
+  const n = S.wave;
+  const q = [];
+  const count = 4 + n * 3;
+  for (let i = 0; i < count; i++) {
+    let type = 'goblin';
+    const roll = Math.random();
+    if (n >= 4 && roll < Math.min(0.25, 0.05 * (n - 3))) type = 'troll';
+    else if (n >= 2 && roll < Math.min(0.6, 0.15 + 0.07 * n)) type = 'ork';
+    q.push(type);
+  }
+  S.queue = q;
+  S.inWave = true;
+  S.spawnCd = 0.5;
+  S.banner = { text: 'Welle ' + n, t: 2 };
+}
+function spawnEnemy(type) {
+  const T = ENEMY_TYPES[type];
+  const side = Math.floor(Math.random() * 4);
+  let x, y;
+  if (side === 0) { x = rnd(0, W); y = -25; }
+  else if (side === 1) { x = W + 25; y = rnd(0, H); }
+  else if (side === 2) { x = rnd(0, W); y = H + 25; }
+  else { x = -25; y = rnd(0, H); }
+  const hp = Math.round(T.hp * (1 + 0.1 * (S.wave - 1)));
+  S.enemies.push({ type, x, y, hp, maxHp: hp, speed: T.speed * rnd(0.9, 1.1), dmg: T.dmg, r: T.r,
+    coins: T.coins, atkCd: 0.5, flash: 0, seed: Math.random() * 10, dir: 0, dead: false });
+}
+
+// ====== Schaden und Belohnung ======
+function hitEnemy(e, dmg, house) {
+  if (e.dead) return;
+  e.hp -= dmg; e.flash = 0.12;
+  if (e.hp <= 0) {
+    e.dead = true;
+    puff(e.x, e.y, ENEMY_TYPES[e.type].body, 12);
+    for (let i = 0; i < e.coins; i++) {
+      const a = rnd(0, Math.PI * 2), s = rnd(40, 110);
+      S.coinsOnGround.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0, fly: false });
+    }
+    if (house) {
+      house.kills++;
+      if (house.kills >= SQUAD_KILLS) newSquad(house, true);
+    }
+  }
+}
+function newSquad(house, retired) {
+  for (const s of S.soldiers) if (s.house === house) { s.dead = true; puff(s.x, s.y, '#ffffff', 8); }
+  if (retired) addText(house.x, house.y - 40, '20 besiegt! Neue Truppe!', '#ffe27a');
+  house.kills = 0;
+  house.toSpawn = SQUAD_SIZE;
+  house.spawnCd = 0.3;
+}
+function collectCoin(c) {
+  if (c.fly) return;
+  c.fly = true;
+}
+
+// ====== Upgrades ======
+function upgradeCost(u) { return Math.round(u.base * Math.pow(u.mult, S.lv[u.id])); }
+function buy(id) {
+  if (phase !== 'play') return;
+  const u = UPGRADES.find(x => x.id === id);
+  const cost = upgradeCost(u);
+  if (S.coins < cost) return;
+  if (id === 'repair' && S.hp >= S.maxHp) return;
+  S.coins -= cost; S.lv[id]++;
+  if (id === 'wall') { S.maxHp += 25; S.hp += 25; addText(500, 200, 'Mauern stärker!', '#ffe27a'); }
+  if (id === 'arrow') { S.arrowDmg += 1; addText(500, 200, 'Pfeile stärker!', '#ffe27a'); }
+  if (id === 'speed') { S.arrowInterval *= 0.8; addText(500, 200, 'Pfeile schneller!', '#ffe27a'); }
+  if (id === 'soldier') {
+    S.soldierDmg += 1; S.soldierHp += 5;
+    for (const s of S.soldiers) { s.maxHp = S.soldierHp; s.hp += 5; }
+    addText(500, 200, 'Kämpfer stärker!', '#ffe27a');
+  }
+  if (id === 'repair') { S.hp = Math.min(S.maxHp, S.hp + 30); puff(500, 350, '#d8d8d8', 16); addText(500, 200, 'Repariert!', '#9cff8a'); }
+  renderBar();
+}
+
+// ====== Update ======
+function update(dt) {
+  S.time += dt;
+  if (S.banner && phase !== 'start') { S.banner.t -= dt; if (S.banner.t <= 0) S.banner = null; }
+  S.shake = Math.max(0, S.shake - dt);
+
+  // Wellensteuerung
+  if (!S.inWave) {
+    S.betweenTimer -= dt;
+    if (S.betweenTimer <= 0) startWave();
+  } else {
+    if (S.queue.length) {
+      S.spawnCd -= dt;
+      if (S.spawnCd <= 0) {
+        spawnEnemy(S.queue.shift());
+        S.spawnCd = Math.max(0.35, 1.3 - 0.06 * S.wave) * rnd(0.6, 1.3);
+      }
+    } else if (S.enemies.length === 0) {
+      S.inWave = false;
+      S.betweenTimer = 5;
+      const bonus = 3 + S.wave * 2;
+      S.coins += bonus;
+      S.banner = { text: 'Welle geschafft! +' + bonus + ' Münzen', t: 3 };
+    }
+  }
+
+  // Häuser schicken Kämpfer
+  for (const h of S.houses) {
+    if (!h.active) continue;
+    if (h.toSpawn > 0) {
+      h.spawnCd -= dt;
+      if (h.spawnCd <= 0) {
+        h.toSpawn--; h.spawnCd = 0.25;
+        const idx = SQUAD_SIZE - 1 - h.toSpawn;
+        S.soldiers.push({ house: h, x: h.x, y: h.y + 18, r: 9, hp: S.soldierHp, maxHp: S.soldierHp,
+          path: [{ x: h.x, y: 445 }, { x: GATE.x + rnd(-10, 10), y: GATE.y + 2 }, { x: GATE.x + rnd(-14, 14), y: GATE.y + 34 }],
+          atkCd: 0, swing: 0, dir: Math.PI / 2, idx, dead: false });
+      }
+    } else if (!S.soldiers.some(s => s.house === h && !s.dead)) {
+      addText(h.x, h.y - 40, 'Neue Truppe!', '#ffe27a');
+      newSquad(h, false);
+    }
+  }
+
+  // Kämpfer
+  for (const s of S.soldiers) {
+    if (s.dead) continue;
+    s.swing = Math.max(0, s.swing - dt);
+    if (s.path.length) {
+      if (moveTo(s, s.path[0].x, s.path[0].y, 80, dt)) s.path.shift();
+      continue;
+    }
+    let target = null, bd = 1e9;
+    for (const e of S.enemies) { if (e.dead) continue; const d = dist(s, e); if (d < bd) { bd = d; target = e; } }
+    if (target) {
+      if (bd > s.r + target.r + 3) walkAround(s, target.x, target.y, 75, dt);
+      else {
+        s.dir = Math.atan2(target.y - s.y, target.x - s.x);
+        s.atkCd -= dt;
+        if (s.atkCd <= 0) { s.atkCd = 0.6; s.swing = 0.2; hitEnemy(target, S.soldierDmg, s.house); }
+      }
+    } else {
+      // Wache vor dem Tor
+      const gx = GATE.x + (s.idx - 4.5) * 20;
+      const gy = GATE.y + 40 + s.house.id * 22;
+      walkAround(s, gx, gy, 60, dt);
+    }
+    // nicht durch die Mauer laufen
+    const m = 14;
+    if (s.x > WALL.l - m && s.x < WALL.r + m && s.y > WALL.t - m && s.y < WALL.b + m) {
+      const pl = s.x - (WALL.l - m), pr = (WALL.r + m) - s.x, pt = s.y - (WALL.t - m), pb = (WALL.b + m) - s.y;
+      const mn = Math.min(pl, pr, pt, pb);
+      if (mn === pl) s.x = WALL.l - m; else if (mn === pr) s.x = WALL.r + m;
+      else if (mn === pt) s.y = WALL.t - m; else s.y = WALL.b + m;
+    }
+    if (s.hp <= 0) { s.dead = true; puff(s.x, s.y, SQUAD_COLORS[s.house.id], 8); }
+  }
+
+  // Gegner
+  for (const e of S.enemies) {
+    if (e.dead) continue;
+    e.flash = Math.max(0, e.flash - dt);
+    // Kämpfer in der Nähe?
+    let foe = null, fd = 1e9;
+    for (const s of S.soldiers) { if (s.dead || s.path.length) continue; const d = dist(e, s); if (d < fd) { fd = d; foe = s; } }
+    if (foe && fd < e.r + foe.r + 4) {
+      e.dir = Math.atan2(foe.y - e.y, foe.x - e.x);
+      e.atkCd -= dt;
+      if (e.atkCd <= 0) { e.atkCd = 1; foe.hp -= e.dmg; }
+      e.attacking = true;
+      continue;
+    }
+    const wp = wallPoint(e);
+    const dw = dist(e, wp);
+    if (dw <= e.r + 6) {
+      e.attacking = true;
+      e.dir = Math.atan2(wp.y - e.y, wp.x - e.x);
+      e.atkCd -= dt;
+      if (e.atkCd <= 0) {
+        e.atkCd = 1;
+        S.hp -= e.dmg; S.shake = 0.15;
+        puff(wp.x, wp.y, '#b0a090', 4);
+      }
+    } else {
+      e.attacking = false;
+      if (foe && fd < 70) moveTo(e, foe.x, foe.y, e.speed, dt);
+      else moveTo(e, wp.x, wp.y, e.speed, dt);
+    }
+  }
+  // Gegner schubsen sich auseinander
+  const en = S.enemies;
+  for (let i = 0; i < en.length; i++) for (let j = i + 1; j < en.length; j++) {
+    const a = en[i], b = en[j];
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = a.r + b.r;
+    if (d > 0 && d < min) { const p = (min - d) / 2; a.x -= dx / d * p; a.y -= dy / d * p; b.x += dx / d * p; b.y += dy / d * p; }
+  }
+
+  const so = S.soldiers;
+  for (let i = 0; i < so.length; i++) for (let j = i + 1; j < so.length; j++) {
+    const a = so[i], b = so[j];
+    if (a.path.length || b.path.length) continue;
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = a.r + b.r;
+    if (d > 0 && d < min) { const p = (min - d) / 2; a.x -= dx / d * p; a.y -= dy / d * p; b.x += dx / d * p; b.y += dy / d * p; }
+  }
+
+  // Türme schießen
+  for (let i = 0; i < 4; i++) {
+    S.towerCd[i] -= dt;
+    if (S.towerCd[i] > 0) continue;
+    const t = { x: TOWERS[i][0], y: TOWERS[i][1] };
+    let target = null, bd = 300;
+    for (const e of S.enemies) { if (e.dead) continue; const d = dist(t, e); if (d < bd) { bd = d; target = e; } }
+    if (target) {
+      S.arrows.push({ x: t.x, y: t.y - 10, target, dir: 0 });
+      S.towerCd[i] = S.arrowInterval;
+    }
+  }
+  for (const a of S.arrows) {
+    if (a.target.dead) { a.done = true; continue; }
+    if (moveTo(a, a.target.x, a.target.y, 480, dt) || dist(a, a.target) < a.target.r) {
+      a.done = true; hitEnemy(a.target, S.arrowDmg, null);
+    }
+  }
+
+  // Münzen
+  for (const c of S.coinsOnGround) {
+    c.t += dt;
+    if (c.fly) {
+      if (moveTo(c, HUD_COIN.x, HUD_COIN.y, 900, dt)) { c.done = true; S.coins++; renderBar(); }
+    } else {
+      c.x += c.vx * dt; c.y += c.vy * dt; c.vx *= 0.9; c.vy *= 0.9;
+      if (c.t > 7) collectCoin(c);   // nach 7 Sekunden fliegen sie von selbst ins Säckchen
+    }
+  }
+
+  // Effekte
+  for (const f of S.fx) { f.t += dt; f.x += f.vx * dt; f.y += f.vy * dt; f.vx *= 0.92; f.vy *= 0.92; }
+  for (const t of S.texts) { t.t += dt; t.y -= 30 * dt; }
+
+  S.enemies = S.enemies.filter(e => !e.dead);
+  S.soldiers = S.soldiers.filter(s => !s.dead);
+  S.arrows = S.arrows.filter(a => !a.done);
+  S.coinsOnGround = S.coinsOnGround.filter(c => !c.done);
+  S.fx = S.fx.filter(f => f.t < f.life);
+  S.texts = S.texts.filter(t => t.t < 1.4);
+
+  if (S.hp <= 0) gameOver();
+}
+
+// ====== Tippen / Klicken ======
+function onTap(x, y) {
+  if (phase !== 'play') return;
+  S.fx.push({ x, y, vx: 0, vy: 0, t: 0, life: 0.25, ring: true });
+  // Münzen einsammeln
+  let got = false;
+  for (const c of S.coinsOnGround) if (!c.fly && Math.hypot(c.x - x, c.y - y) < 40) { collectCoin(c); got = true; }
+  if (got) return;
+  // Gegner hauen
+  let target = null, bd = 1e9;
+  for (const e of S.enemies) { const d = Math.hypot(e.x - x, e.y - y); if (d < e.r + 16 && d < bd) { bd = d; target = e; } }
+  if (target) { hitEnemy(target, 1, null); puff(x, y, '#ffffff', 5); return; }
+  // Haus antippen
+  for (const h of S.houses) {
+    if (!h.active && Math.abs(x - h.x) < 36 && Math.abs(y - h.y) < 36) {
+      h.active = true; newSquad(h, false);
+      addText(h.x, h.y - 40, 'Los gehts!', '#ffe27a');
+    }
+  }
+}
+
+// ====== Zeichnen ======
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let scale = 1, dpr = 1;
+const bg = document.createElement('canvas');
+function buildBackground() {
+  bg.width = W * 2; bg.height = H * 2;
+  const g = bg.getContext('2d');
+  g.scale(2, 2);
+  g.fillStyle = '#5c9e45'; g.fillRect(0, 0, W, H);
+  // Flecken
+  for (let i = 0; i < 40; i++) {
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(80,140,60,.5)' : 'rgba(110,170,80,.45)';
+    g.beginPath(); g.ellipse(rnd(0, W), rnd(0, H), rnd(30, 90), rnd(20, 60), rnd(0, 3), 0, Math.PI * 2); g.fill();
+  }
+  // Grashalme
+  g.strokeStyle = 'rgba(40,90,30,.55)'; g.lineWidth = 1.5;
+  for (let i = 0; i < 380; i++) {
+    const x = rnd(0, W), y = rnd(0, H);
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x - 2, y - 6); g.moveTo(x, y); g.lineTo(x + 2, y - 7); g.stroke();
+  }
+  // Blumen
+  for (let i = 0; i < 45; i++) {
+    g.fillStyle = ['#fff', '#ffe066', '#ff8fb1'][i % 3];
+    g.beginPath(); g.arc(rnd(0, W), rnd(0, H), 2.2, 0, Math.PI * 2); g.fill();
+  }
+}
+
+function resize() {
+  const stage = document.getElementById('stage');
+  const aw = stage.clientWidth - 16, ah = stage.clientHeight - 16;
+  scale = Math.min(aw / W, ah / H);
+  dpr = window.devicePixelRatio || 1;
+  cv.style.width = (W * scale) + 'px'; cv.style.height = (H * scale) + 'px';
+  cv.width = Math.round(W * scale * dpr); cv.height = Math.round(H * scale * dpr);
+}
+
+function drawCastle() {
+  // Hof
+  ctx.fillStyle = '#d8c08a';
+  ctx.fillRect(WALL.l, WALL.t, WALL.r - WALL.l, WALL.b - WALL.t);
+  ctx.fillStyle = 'rgba(160,130,80,.35)';
+  for (let i = 0; i < 6; i++) { ctx.beginPath(); ctx.arc(400 + i * 40, 420 + (i % 2) * 18, 7, 0, Math.PI * 2); ctx.fill(); }
+  // Weg zum Tor
+  ctx.fillStyle = '#c4a56c';
+  ctx.fillRect(GATE.x - 18, 360, 36, WALL.b - 360);
+
+  // Mauern
+  ctx.lineJoin = 'miter';
+  ctx.strokeStyle = '#6f6f6f'; ctx.lineWidth = 22;
+  ctx.strokeRect(WALL.l, WALL.t, WALL.r - WALL.l, WALL.b - WALL.t);
+  ctx.strokeStyle = '#9d9d9d'; ctx.lineWidth = 16;
+  ctx.strokeRect(WALL.l, WALL.t, WALL.r - WALL.l, WALL.b - WALL.t);
+  // Zinnen
+  ctx.fillStyle = '#b8b8b8';
+  for (let x = WALL.l + 30; x < WALL.r - 20; x += 22) { ctx.fillRect(x, WALL.t - 11, 10, 6); ctx.fillRect(x, WALL.b + 5, 10, 6); }
+  for (let y = WALL.t + 30; y < WALL.b - 20; y += 22) { ctx.fillRect(WALL.l - 11, y, 6, 10); ctx.fillRect(WALL.r + 5, y, 6, 10); }
+
+  // Tor
+  ctx.fillStyle = '#7a4a22';
+  ctx.fillRect(GATE.x - GATE.w / 2, GATE.y - 12, GATE.w, 24);
+  ctx.strokeStyle = '#4e2e12'; ctx.lineWidth = 2;
+  for (let i = 1; i < 5; i++) { const x = GATE.x - GATE.w / 2 + i * GATE.w / 5; ctx.beginPath(); ctx.moveTo(x, GATE.y - 12); ctx.lineTo(x, GATE.y + 12); ctx.stroke(); }
+  ctx.strokeRect(GATE.x - GATE.w / 2, GATE.y - 12, GATE.w, 24);
+
+  // Türme
+  TOWERS.forEach(([x, y], i) => {
+    ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.beginPath(); ctx.arc(x + 4, y + 5, 30, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#8f8f8f'; ctx.beginPath(); ctx.arc(x, y, 30, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#5c5c5c'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = '#b5b5b5';
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; ctx.beginPath(); ctx.arc(x + Math.cos(a) * 24, y + Math.sin(a) * 24, 5, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#7a7a7a'; ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.fill();
+    // Fahne
+    ctx.strokeStyle = '#4a3420'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 34); ctx.stroke();
+    const wave = Math.sin(S.time * 5 + i) * 3;
+    ctx.fillStyle = '#d63b2f';
+    ctx.beginPath(); ctx.moveTo(x, y - 34); ctx.lineTo(x + 20, y - 29 + wave); ctx.lineTo(x, y - 22); ctx.closePath(); ctx.fill();
+  });
+
+  // Häuser
+  for (const h of S.houses) {
+    const x = h.x, y = h.y;
+    ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.fillRect(x - 26, y - 6, 56, 34);
+    ctx.fillStyle = '#efdcb0'; ctx.fillRect(x - 28, y - 8, 56, 32);
+    ctx.strokeStyle = '#7a5a30'; ctx.lineWidth = 2; ctx.strokeRect(x - 28, y - 8, 56, 32);
+    ctx.fillStyle = SQUAD_COLORS[h.id];
+    ctx.beginPath(); ctx.moveTo(x - 34, y - 6); ctx.lineTo(x, y - 34); ctx.lineTo(x + 34, y - 6); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.stroke();
+    ctx.fillStyle = '#6b3f1d'; ctx.fillRect(x - 7, y + 6, 14, 18);
+    ctx.fillStyle = '#7fc6ff'; ctx.fillRect(x - 22, y + 2, 9, 9); ctx.fillRect(x + 13, y + 2, 9, 9);
+    // Beschriftung
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    if (!h.active) {
+      const p = 1 + Math.sin(S.time * 6) * 0.08;
+      ctx.save(); ctx.translate(x, y - 48); ctx.scale(p, p);
+      pill('Tippen!', 0, 0, '#e8573c', '#fff');
+      ctx.restore();
+    } else {
+      pill('⚔ ' + h.kills + '/' + SQUAD_KILLS, x, y - 48, 'rgba(0,0,0,.55)', '#fff');
+    }
+  }
+}
+function pill(text, x, y, bgc, fg) {
+  ctx.font = '600 15px Fredoka, system-ui, sans-serif';
+  const w = ctx.measureText(text).width + 16;
+  ctx.fillStyle = bgc;
+  roundRect(x - w / 2, y - 12, w, 24, 12); ctx.fill();
+  ctx.fillStyle = fg; ctx.fillText(text, x, y + 1);
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function drawEnemy(e) {
+  const T = ENEMY_TYPES[e.type];
+  const bob = e.attacking ? 0 : Math.sin(S.time * 10 + e.seed) * 1.5;
+  ctx.save(); ctx.translate(e.x, e.y + bob);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(2, e.r * 0.8, e.r * 0.9, e.r * 0.35, 0, 0, Math.PI * 2); ctx.fill();
+  // Keule
+  const sw = e.attacking ? Math.sin(S.time * 12 + e.seed) * 0.6 : 0;
+  const ca = e.dir + 0.9 + sw;
+  ctx.strokeStyle = '#6b4520'; ctx.lineWidth = e.r * 0.3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(Math.cos(ca) * e.r * 0.6, Math.sin(ca) * e.r * 0.6);
+  ctx.lineTo(Math.cos(ca - 0.6) * e.r * 1.6, Math.sin(ca - 0.6) * e.r * 1.6); ctx.stroke();
+  // Körper
+  ctx.fillStyle = e.flash > 0 ? '#ffffff' : T.body;
+  ctx.beginPath(); ctx.arc(0, 0, e.r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = T.dark; ctx.lineWidth = 2.5; ctx.stroke();
+  // Ohren / Hörner
+  ctx.fillStyle = e.type === 'troll' ? '#e8e0c8' : T.body;
+  for (const s of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(s * e.r * 0.55, -e.r * 0.75); ctx.lineTo(s * e.r * 1.05, -e.r * 1.25); ctx.lineTo(s * e.r * 0.9, -e.r * 0.45); ctx.closePath(); ctx.fill();
+  }
+  // Augen
+  const lx = Math.cos(e.dir) * e.r * 0.15, ly = Math.sin(e.dir) * e.r * 0.15;
+  for (const s of [-1, 1]) {
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s * e.r * 0.38, -e.r * 0.15, e.r * 0.28, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c0141c'; ctx.beginPath(); ctx.arc(s * e.r * 0.38 + lx, -e.r * 0.15 + ly, e.r * 0.14, 0, Math.PI * 2); ctx.fill();
+  }
+  // Mund mit Zähnen
+  ctx.strokeStyle = T.dark; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-e.r * 0.4, e.r * 0.4); ctx.lineTo(e.r * 0.4, e.r * 0.4); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.moveTo(-e.r * 0.3, e.r * 0.4); ctx.lineTo(-e.r * 0.22, e.r * 0.62); ctx.lineTo(-e.r * 0.14, e.r * 0.4); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(e.r * 0.14, e.r * 0.4); ctx.lineTo(e.r * 0.22, e.r * 0.62); ctx.lineTo(e.r * 0.3, e.r * 0.4); ctx.fill();
+  ctx.restore();
+  if (e.hp < e.maxHp) hpBar(e.x, e.y - e.r - 12, e.r * 2, e.hp / e.maxHp, '#e84a3c');
+}
+function drawSoldier(s) {
+  const col = SQUAD_COLORS[s.house.id];
+  ctx.save(); ctx.translate(s.x, s.y);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(1, 7, 8, 3, 0, 0, Math.PI * 2); ctx.fill();
+  // Schwert
+  const sa = s.dir + (s.swing > 0 ? -0.9 + (0.2 - s.swing) * 9 : 0.5);
+  ctx.strokeStyle = '#e6e9ee'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(Math.cos(sa) * 6, Math.sin(sa) * 6); ctx.lineTo(Math.cos(sa) * 19, Math.sin(sa) * 19); ctx.stroke();
+  // Körper
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(0, 0, s.r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 2; ctx.stroke();
+  // Helm
+  ctx.fillStyle = '#c9ced6'; ctx.beginPath(); ctx.arc(0, -2, s.r * 0.75, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(0, -s.r * 0.85, 2.5, 0, Math.PI * 2); ctx.fill();
+  // Gesicht
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-3, 1, 1.8, 0, Math.PI * 2); ctx.arc(3, 1, 1.8, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  if (s.hp < s.maxHp) hpBar(s.x, s.y - 16, 18, s.hp / s.maxHp, '#4ad66d');
+}
+function hpBar(x, y, w, f, col) {
+  ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(x - w / 2 - 1, y - 1, w + 2, 6);
+  ctx.fillStyle = col; ctx.fillRect(x - w / 2, y, w * Math.max(0, f), 4);
+}
+function drawCoin(x, y, r) {
+  ctx.fillStyle = '#b8860b'; ctx.beginPath(); ctx.arc(x, y + 1.5, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffcf3f'; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#e0a810'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r * 0.62, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.beginPath(); ctx.arc(x - r * 0.35, y - r * 0.35, r * 0.22, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawHUD() {
+  // Leben
+  ctx.fillStyle = 'rgba(0,0,0,.45)'; roundRect(14, 14, 200, 40, 12); ctx.fill();
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ff4a5a';
+  ctx.beginPath(); ctx.moveTo(36, 45);
+  ctx.bezierCurveTo(22, 36, 22, 24, 30, 24); ctx.bezierCurveTo(34, 24, 36, 27, 36, 29);
+  ctx.bezierCurveTo(36, 27, 38, 24, 42, 24); ctx.bezierCurveTo(50, 24, 50, 36, 36, 45); ctx.fill();
+  ctx.fillStyle = '#3a1010'; roundRect(54, 25, 148, 20, 8); ctx.fill();
+  const f = Math.max(0, S.hp / S.maxHp);
+  ctx.fillStyle = f > 0.5 ? '#4ad66d' : f > 0.25 ? '#ffb02e' : '#ff4a3c';
+  if (f > 0) { roundRect(54, 25, Math.max(16, 148 * f), 20, 8); ctx.fill(); }
+  ctx.fillStyle = '#fff'; ctx.font = '600 14px Fredoka, system-ui, sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(Math.ceil(Math.max(0, S.hp)) + ' / ' + S.maxHp, 128, 36);
+  // Münzen
+  ctx.fillStyle = 'rgba(0,0,0,.45)'; roundRect(226, 14, 120, 40, 12); ctx.fill();
+  drawCoin(HUD_COIN.x, HUD_COIN.y, 11);
+  ctx.fillStyle = '#ffe27a'; ctx.font = '700 22px Fredoka, system-ui, sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(S.coins, 270, 36);
+  // Welle
+  ctx.fillStyle = 'rgba(0,0,0,.45)'; roundRect(358, 14, 120, 40, 12); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+  ctx.fillText('Welle ' + Math.max(1, S.wave), 418, 36);
+  // Banner
+  if (S.banner && phase !== 'start') {
+    const a = Math.min(1, S.banner.t * 2);
+    ctx.globalAlpha = a;
+    ctx.font = '700 46px Fredoka, system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(40,20,10,.8)';
+    ctx.strokeText(S.banner.text, W / 2, 130);
+    ctx.fillStyle = '#fff1c4'; ctx.fillText(S.banner.text, W / 2, 130);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function draw() {
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  if (S.shake > 0) ctx.translate(rnd(-3, 3), rnd(-3, 3));
+  ctx.drawImage(bg, 0, 0, W, H);
+  drawCastle();
+  for (const c of S.coinsOnGround) if (!c.fly) drawCoin(c.x, c.y + Math.sin(S.time * 6 + c.x) * 1.5, 8);
+  for (const s of S.soldiers) drawSoldier(s);
+  for (const e of S.enemies) drawEnemy(e);
+  // Pfeile
+  ctx.strokeStyle = '#4a3018'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  for (const a of S.arrows) {
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x - Math.cos(a.dir) * 14, a.y - Math.sin(a.dir) * 14); ctx.stroke();
+  }
+  // Effekte
+  for (const f of S.fx) {
+    const k = 1 - f.t / f.life;
+    if (f.ring) {
+      ctx.strokeStyle = 'rgba(255,255,255,' + k + ')'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(f.x, f.y, 10 + (1 - k) * 22, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      ctx.globalAlpha = k; ctx.fillStyle = f.color;
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+    }
+  }
+  for (const c of S.coinsOnGround) if (c.fly) drawCoin(c.x, c.y, 9);
+  for (const t of S.texts) {
+    ctx.globalAlpha = Math.min(1, 1.4 - t.t);
+    ctx.font = '700 20px Fredoka, system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.strokeText(t.text, t.x, t.y);
+    ctx.fillStyle = t.color; ctx.fillText(t.text, t.x, t.y);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+  drawHUD();
+}
+
+// ====== Upgrade-Leiste ======
+const bar = document.getElementById('bar');
+function renderBar() {
+  if (!S) return;
+  bar.innerHTML = '';
+  for (const u of UPGRADES) {
+    const cost = upgradeCost(u);
+    const b = document.createElement('button');
+    b.className = 'up';
+    const lvl = u.id === 'repair' ? '' : 'Stufe ' + S.lv[u.id];
+    b.innerHTML = '<span class="ico">' + u.ico + '</span><span class="nm">' + u.nm + '</span>' +
+      '<span class="cost">🪙 ' + cost + '</span>' + (lvl ? '<span class="lv">' + lvl + '</span>' : '');
+    b.disabled = phase !== 'play' || S.coins < cost || (u.id === 'repair' && S.hp >= S.maxHp);
+    b.addEventListener('click', () => buy(u.id));
+    bar.appendChild(b);
+  }
+}
+
+// ====== Bildschirme ======
+const overlay = document.getElementById('overlay');
+const pauseBtn = document.getElementById('pauseBtn');
+function showStart() {
+  phase = 'start';
+  overlay.className = '';
+  overlay.innerHTML = '<div class="card"><h1>🏰 Burg-Spiel</h1><p class="sub">Eine Idee von Felix</p>' +
+    '<ul><li>Gegner greifen deine Burg an. Die Türme schießen von selbst.</li>' +
+    '<li><b>Tippe</b> auf Gegner, um selbst zu kämpfen.</li>' +
+    '<li><b>Tippe</b> auf Münzen, um sie einzusammeln.</li>' +
+    '<li><b>Tippe</b> auf die Häuser im Hof: Dann kommen 10 Kämpfer heraus. Nach 20 Siegen ruhen sie sich aus und 10 neue kommen.</li>' +
+    '<li>Kaufe unten mit deinen Münzen Upgrades.</li></ul>' +
+    '<button class="big" id="go">Spielen!</button>' + (best ? '<p class="stat">Rekord: Welle ' + best + '</p>' : '') + '</div>';
+  document.getElementById('go').onclick = () => { newGame(); phase = 'play'; overlay.className = 'hidden'; pauseBtn.style.display = 'block'; renderBar(); };
+}
+function gameOver() {
+  phase = 'over';
+  pauseBtn.style.display = 'none';
+  const reached = S.wave;
+  const isBest = reached > best;
+  if (isBest) { best = reached; try { localStorage.setItem('burg-best', best); } catch (e) {} }
+  overlay.className = '';
+  overlay.innerHTML = '<div class="card"><h1>Die Burg ist gefallen!</h1>' +
+    '<p class="stat">Du hast bis <b>Welle ' + reached + '</b> durchgehalten.</p>' +
+    (isBest ? '<p class="stat">🏆 Neuer Rekord!</p>' : '<p class="stat">Rekord: Welle ' + best + '</p>') +
+    '<br><button class="big" id="again">Nochmal!</button></div>';
+  document.getElementById('again').onclick = () => { newGame(); phase = 'play'; overlay.className = 'hidden'; pauseBtn.style.display = 'block'; renderBar(); };
+  renderBar();
+}
+function pause() {
+  if (phase !== 'play') return;
+  phase = 'pause';
+  overlay.className = '';
+  overlay.innerHTML = '<div class="card"><h1>Pause</h1><br><button class="big" id="resume">Weiter</button></div>';
+  document.getElementById('resume').onclick = () => { phase = 'play'; overlay.className = 'hidden'; renderBar(); };
+  renderBar();
+}
+pauseBtn.addEventListener('click', pause);
+document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+window.addEventListener('keydown', e => { if (e.key === 'p' || e.key === 'Escape') { if (phase === 'play') pause(); } });
+
+cv.addEventListener('pointerdown', ev => {
+  ev.preventDefault();
+  const r = cv.getBoundingClientRect();
+  onTap((ev.clientX - r.left) / scale, (ev.clientY - r.top) / scale);
+});
+
+// ====== Hauptschleife ======
+let last = performance.now(), barTimer = 0;
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (phase === 'play') {
+    update(dt);
+    barTimer -= dt;
+    if (barTimer <= 0) { barTimer = 0.25; renderBar(); }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+buildBackground();
+newGame();
+showStart();
+renderBar();
+resize();
+window.addEventListener('resize', resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe(document.getElementById('stage'));
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
