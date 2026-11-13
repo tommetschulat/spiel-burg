@@ -78,11 +78,11 @@ const SQUAD_KILLS = 20;    // nach so vielen Siegen verschwinden sie
 const SQUAD_COLORS = ['#3b7dd8', '#9b4fc4'];
 
 const UPGRADES = [
-  { id: 'wall',    ico: '🧱', nm: 'Dickere Mauern',   base: 15, mult: 1.5 },
-  { id: 'arrow',   ico: '🏹', nm: 'Bessere Pfeile',   base: 20, mult: 1.6 },
-  { id: 'speed',   ico: '⚡', nm: 'Schnellere Pfeile', base: 20, mult: 1.6 },
-  { id: 'soldier', ico: '⚔️', nm: 'Stärkere Kämpfer', base: 25, mult: 1.6 },
-  { id: 'repair',  ico: '🔧', nm: 'Burg reparieren',  base: 10, mult: 1.25 },
+  { id: 'wall',    ico: '🧱', nm: 'Dickere Mauern',   base: 10, mult: 1.35 },
+  { id: 'arrow',   ico: '🏹', nm: 'Bessere Pfeile',   base: 12, mult: 1.4 },
+  { id: 'speed',   ico: '⚡', nm: 'Schnellere Pfeile', base: 12, mult: 1.4 },
+  { id: 'soldier', ico: '⚔️', nm: 'Stärkere Kämpfer', base: 15, mult: 1.4 },
+  { id: 'repair',  ico: '🔧', nm: 'Burg reparieren',  base: 6,  mult: 1.2 },
 ];
 
 let S = null;            // Spielzustand
@@ -683,19 +683,31 @@ function draw() {
 
 // ====== Upgrade-Leiste ======
 const bar = document.getElementById('bar');
-function renderBar() {
-  if (!S) return;
-  bar.innerHTML = '';
+// Die Knöpfe werden nur einmal gebaut und danach nur aktualisiert,
+// damit ein Tipp nie auf einen gerade ersetzten Knopf fällt.
+const barButtons = {};
+function buildBar() {
   for (const u of UPGRADES) {
-    const cost = upgradeCost(u);
     const b = document.createElement('button');
     b.className = 'up';
-    const lvl = u.id === 'repair' ? '' : 'Stufe ' + S.lv[u.id];
     b.innerHTML = '<span class="ico">' + u.ico + '</span><span class="nm">' + u.nm + '</span>' +
-      '<span class="cost">🪙 ' + cost + '</span>' + (lvl ? '<span class="lv">' + lvl + '</span>' : '');
-    b.disabled = phase !== 'play' || S.coins < cost || (u.id === 'repair' && S.hp >= S.maxHp);
-    b.addEventListener('click', () => buy(u.id));
+      '<span class="cost"></span>' + (u.id === 'repair' ? '' : '<span class="lv"></span>');
+    // pointerdown reagiert sofort beim Antippen
+    b.addEventListener('pointerdown', ev => { ev.preventDefault(); buy(u.id); });
+    // Tastatur (Enter/Leertaste)
+    b.addEventListener('click', ev => { if (ev.detail === 0) buy(u.id); });
     bar.appendChild(b);
+    barButtons[u.id] = { b, cost: b.querySelector('.cost'), lv: b.querySelector('.lv') };
+  }
+}
+function renderBar() {
+  if (!S) return;
+  for (const u of UPGRADES) {
+    const el = barButtons[u.id];
+    const cost = upgradeCost(u);
+    el.cost.textContent = '🪙 ' + cost;
+    if (el.lv) el.lv.textContent = 'Stufe ' + S.lv[u.id];
+    el.b.disabled = phase !== 'play' || S.coins < cost || (u.id === 'repair' && S.hp >= S.maxHp);
   }
 }
 
@@ -759,6 +771,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 buildBackground();
+buildBar();
 newGame();
 showStart();
 renderBar();
