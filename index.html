@@ -72,7 +72,7 @@ const HUD_COIN = { x: 250, y: 34 };
 
 const ENEMY_TYPES = {
   goblin:   { name: 'Goblin',          from: 1, weight: 10, hp: 3,  speed: 55, dmg: 2,  coins: 2,  r: 11, body: '#63b33c', dark: '#2f6a1a' },
-  ork:      { name: 'Ork',             from: 2, weight: 7,  hp: 7,  speed: 38, dmg: 4,  coins: 4,  r: 15, body: '#9a8636', dark: '#4d4218' },
+  ork:      { name: 'Ork',             from: 2, weight: 7,  hp: 7,  speed: 38, dmg: 4,  coins: 4,  r: 15, body: '#7f9a3e', dark: '#3d5220' },
   skelett:  { name: 'Skelett',         from: 3, weight: 6,  hp: 6,  speed: 50, dmg: 3,  coins: 4,  r: 13, body: '#eeeae0', dark: '#8c867a' },
   troll:    { name: 'Troll',           from: 4, weight: 3,  hp: 22, speed: 24, dmg: 9,  coins: 10, r: 21, body: '#7d8fa6', dark: '#435468' },
   fledermaus: { name: 'Riesenfledermaus', from: 5, weight: 5, hp: 5, speed: 78, dmg: 3, coins: 5,  r: 11, body: '#6b3fa0', dark: '#3a1f5c', flies: true },
@@ -751,129 +751,255 @@ function roundRect(x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
 
-function drawEnemy(e) {
-  const T = ENEMY_TYPES[e.type], r = e.r, k = e.type;
-  const fly = e.flies;
-  const bob = fly ? Math.sin(S.time * 8 + e.seed) * 4 - 6 : (e.attacking ? 0 : Math.sin(S.time * 10 + e.seed) * 1.5);
-  ctx.save(); ctx.translate(e.x, e.y);
-  // Schatten (bei Fliegern kleiner und weiter unten)
-  ctx.fillStyle = 'rgba(0,0,0,.25)';
-  ctx.beginPath(); ctx.ellipse(2, r * (fly ? 1.4 : 0.8), r * (fly ? 0.6 : 0.9), r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.translate(0, bob);
-  const sw = e.attacking ? Math.sin(S.time * 12 + e.seed) * 0.6 : 0;
-  const ca = e.dir + 0.9 + sw;
-  const wx1 = Math.cos(ca) * r * 0.6, wy1 = Math.sin(ca) * r * 0.6;
-  const wx2 = Math.cos(ca - 0.6) * r * 1.7, wy2 = Math.sin(ca - 0.6) * r * 1.7;
+// ====== Gegner als Figuren mit Kopf, Körper, Armen und Beinen ======
+function limb(x1, y1, x2, y2, w, col, outline) {
   ctx.lineCap = 'round';
+  if (outline) { ctx.strokeStyle = outline; ctx.lineWidth = w + 2; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+  ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+function blob(x, y, rx, ry, fill, stroke, lw) {
+  ctx.fillStyle = fill; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1.5; ctx.stroke(); }
+}
+function drawEnemy(e) {
+  const T = ENEMY_TYPES[e.type], k = e.type, r = e.r, u = r / 12;
+  const moving = e.lx !== undefined && Math.hypot(e.x - e.lx, e.y - e.ly) > 0.02;
+  e.lx = e.x; e.ly = e.y;
+  const t = S.time * 10 + e.seed;
+  const walk = moving ? Math.sin(t) : 0;
+  const fly = e.flies;
+  const f = Math.cos(e.dir) < 0 ? -1 : 1;           // schaut nach links oder rechts
+  const skin = e.flash > 0 ? '#ffffff' : T.body, dark = T.dark;
+  const bob = fly ? Math.sin(S.time * 8 + e.seed) * 4 - 8 * u : (moving ? -Math.abs(Math.sin(t)) * 1.5 * u : 0);
+  // Waffenarm: schwingt beim Angreifen
+  const armA = e.attacking ? 0.6 + Math.sin(S.time * 12 + e.seed) * 1.0 : 0.5 + walk * 0.15;
 
-  // Flügel der Fledermaus
+  ctx.save(); ctx.translate(e.x, e.y);
+  // Schatten
+  ctx.fillStyle = 'rgba(0,0,0,.25)';
+  ctx.beginPath(); ctx.ellipse(1, (fly ? 16 : 12) * u, (fly ? 7 : 10) * u, 3 * u, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.translate(0, bob);
+  ctx.scale(f, 1);
+
+  const sh = { x: 6 * u, y: -3 * u };                              // Schulter des Waffenarms
+  const hand = { x: sh.x + Math.cos(armA) * 7 * u, y: sh.y + Math.sin(armA) * 7 * u };
+  const wa = armA - 1.4;                                           // Richtung der Waffe
+  const wx = Math.cos(wa), wy = Math.sin(wa);
+
   if (k === 'fledermaus') {
-    const flap = Math.sin(S.time * 18 + e.seed) * 0.5;
-    ctx.fillStyle = T.dark;
+    // ---------- Riesenfledermaus ----------
+    const flap = Math.sin(S.time * 18 + e.seed) * 0.55;
     for (const sd of [-1, 1]) {
-      ctx.save(); ctx.scale(sd, 1); ctx.rotate(flap);
-      ctx.beginPath(); ctx.moveTo(r * 0.5, -r * 0.2);
-      ctx.lineTo(r * 2.2, -r * 0.9); ctx.lineTo(r * 1.9, r * 0.1); ctx.lineTo(r * 1.5, -r * 0.1);
-      ctx.lineTo(r * 1.2, r * 0.5); ctx.lineTo(r * 0.9, r * 0.1); ctx.lineTo(r * 0.5, r * 0.5); ctx.closePath(); ctx.fill();
+      ctx.save(); ctx.scale(sd, 1); ctx.rotate(-flap);
+      ctx.fillStyle = dark;
+      ctx.beginPath(); ctx.moveTo(3 * u, -3 * u);
+      ctx.quadraticCurveTo(14 * u, -14 * u, 26 * u, -9 * u);
+      ctx.lineTo(22 * u, -2 * u); ctx.quadraticCurveTo(19 * u, -5 * u, 16 * u, 1 * u);
+      ctx.quadraticCurveTo(13 * u, -2 * u, 10 * u, 4 * u); ctx.quadraticCurveTo(7 * u, 1 * u, 3 * u, 4 * u); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = T.body; ctx.lineWidth = 1.2;              // Flügelknochen
+      ctx.beginPath(); ctx.moveTo(3 * u, -3 * u); ctx.quadraticCurveTo(14 * u, -14 * u, 26 * u, -9 * u);
+      ctx.moveTo(10 * u, -9 * u); ctx.lineTo(16 * u, 1 * u); ctx.moveTo(8 * u, -6 * u); ctx.lineTo(10 * u, 4 * u); ctx.stroke();
       ctx.restore();
     }
-  }
-  // Waffe
-  if (k === 'ritter') {           // Schwert
-    ctx.strokeStyle = '#8a1c1c'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(wx1, wy1); ctx.lineTo(wx1 + (wx2 - wx1) * 0.2, wy1 + (wy2 - wy1) * 0.2); ctx.stroke();
-    ctx.strokeStyle = '#c9ced6'; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(wx1 + (wx2 - wx1) * 0.2, wy1 + (wy2 - wy1) * 0.2); ctx.lineTo(wx2 * 1.15, wy2 * 1.15); ctx.stroke();
-  } else if (k === 'skelett') {   // Knochen
-    ctx.strokeStyle = '#f4f1e8'; ctx.lineWidth = r * 0.25;
-    ctx.beginPath(); ctx.moveTo(wx1, wy1); ctx.lineTo(wx2, wy2); ctx.stroke();
-    ctx.fillStyle = '#f4f1e8'; ctx.beginPath(); ctx.arc(wx2, wy2, r * 0.22, 0, Math.PI * 2); ctx.fill();
-  } else if (k !== 'fledermaus') { // Keule (beim Zyklop mit Stacheln)
-    ctx.strokeStyle = '#6b4520'; ctx.lineWidth = r * 0.3;
-    ctx.beginPath(); ctx.moveTo(wx1, wy1); ctx.lineTo(wx2, wy2); ctx.stroke();
-    if (k === 'zyklop') {
-      ctx.fillStyle = '#5a3a1a'; ctx.beginPath(); ctx.arc(wx2, wy2, r * 0.32, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#ddd';
-      for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; ctx.beginPath(); ctx.arc(wx2 + Math.cos(a) * r * 0.32, wy2 + Math.sin(a) * r * 0.32, 2.5, 0, Math.PI * 2); ctx.fill(); }
-    }
-  }
-  // Körper
-  ctx.fillStyle = e.flash > 0 ? '#ffffff' : T.body;
-  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = T.dark; ctx.lineWidth = 2.5; ctx.stroke();
-
-  if (k === 'skelett') {
-    // Totenkopf: dunkle Augenhöhlen, Nase, Zahnreihe
-    ctx.fillStyle = '#2a2622';
-    for (const sd of [-1, 1]) { ctx.beginPath(); ctx.arc(sd * r * 0.38, -r * 0.15, r * 0.27, 0, Math.PI * 2); ctx.fill(); }
-    ctx.fillStyle = '#ff3b3b';
-    for (const sd of [-1, 1]) { ctx.beginPath(); ctx.arc(sd * r * 0.38, -r * 0.15, r * 0.09, 0, Math.PI * 2); ctx.fill(); }
-    ctx.fillStyle = '#2a2622';
-    ctx.beginPath(); ctx.moveTo(0, r * 0.08); ctx.lineTo(-r * 0.1, r * 0.25); ctx.lineTo(r * 0.1, r * 0.25); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = '#2a2622'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(-r * 0.4, r * 0.48); ctx.lineTo(r * 0.4, r * 0.48);
-    for (let i = -3; i <= 3; i++) { ctx.moveTo(i * r * 0.12, r * 0.38); ctx.lineTo(i * r * 0.12, r * 0.58); }
-    ctx.stroke();
-  } else if (k === 'ritter') {
-    // Helm mit Hörnern und rot glühendem Visier
-    ctx.fillStyle = '#d8d0c0';
-    for (const sd of [-1, 1]) {
-      ctx.beginPath(); ctx.moveTo(sd * r * 0.6, -r * 0.6); ctx.quadraticCurveTo(sd * r * 1.4, -r * 0.9, sd * r * 1.2, -r * 1.6); ctx.quadraticCurveTo(sd * r * 1.0, -r * 1.0, sd * r * 0.4, -r * 0.85); ctx.closePath(); ctx.fill();
-    }
-    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(-r * 0.6, -r * 0.3, r * 1.2, r * 0.32);
-    ctx.fillStyle = '#ff2a2a'; ctx.shadowColor = '#ff2a2a'; ctx.shadowBlur = 8;
-    ctx.fillRect(-r * 0.45, -r * 0.22, r * 0.3, r * 0.16); ctx.fillRect(r * 0.15, -r * 0.22, r * 0.3, r * 0.16);
+    blob(0, 1 * u, 6 * u, 8 * u, skin, dark, 2);                  // Körper
+    ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1;
+    for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(-3 * u, (2 + i * 2.5) * u); ctx.quadraticCurveTo(0, (3 + i * 2.5) * u, 3 * u, (2 + i * 2.5) * u); ctx.stroke(); }
+    ctx.fillStyle = skin;                                          // Ohren
+    for (const sd of [-1, 1]) { ctx.beginPath(); ctx.moveTo(sd * 2 * u, -9 * u); ctx.lineTo(sd * 5 * u, -17 * u); ctx.lineTo(sd * 6 * u, -8 * u); ctx.closePath(); ctx.fill(); }
+    blob(0, -8 * u, 5.5 * u, 5 * u, skin, dark, 2);               // Kopf
+    ctx.fillStyle = '#ffe14d'; ctx.shadowColor = '#ffe14d'; ctx.shadowBlur = 6;
+    ctx.beginPath(); ctx.arc(-2 * u, -9 * u, 1.6 * u, 0, Math.PI * 2); ctx.arc(2.5 * u, -9 * u, 1.6 * u, 0, Math.PI * 2); ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(0, r * 0.05); ctx.lineTo(0, r * 0.7); ctx.stroke();
-    // Schild
-    ctx.fillStyle = '#5a0f14'; ctx.strokeStyle = '#999'; ctx.lineWidth = 1.5;
-    const sx = -Math.cos(e.dir) * r * 0.9, sy = r * 0.3;
-    ctx.beginPath(); ctx.moveTo(sx - r * 0.4, sy - r * 0.45); ctx.lineTo(sx + r * 0.4, sy - r * 0.45); ctx.lineTo(sx + r * 0.4, sy + r * 0.1);
-    ctx.quadraticCurveTo(sx + r * 0.4, sy + r * 0.45, sx, sy + r * 0.6); ctx.quadraticCurveTo(sx - r * 0.4, sy + r * 0.45, sx - r * 0.4, sy + r * 0.1); ctx.closePath();
-    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff';                                        // Fangzähne
+    for (const sx of [-1.2, 1.2]) { ctx.beginPath(); ctx.moveTo(sx * u - u, -5.5 * u); ctx.lineTo(sx * u, -3 * u); ctx.lineTo(sx * u + u, -5.5 * u); ctx.closePath(); ctx.fill(); }
+    limb(-2 * u, 8 * u, -3 * u, 11 * u, 1.5 * u, dark); limb(2 * u, 8 * u, 3 * u, 11 * u, 1.5 * u, dark);
   } else {
-    // Ohren / Hörner
-    if (k !== 'zyklop') {
-      ctx.fillStyle = k === 'troll' ? '#e8e0c8' : T.body;
-      const ear = k === 'fledermaus' ? 1.5 : 1.25;
-      for (const sd of [-1, 1]) {
-        ctx.beginPath(); ctx.moveTo(sd * r * 0.55, -r * 0.75); ctx.lineTo(sd * r * 1.05, -r * ear); ctx.lineTo(sd * r * 0.9, -r * 0.45); ctx.closePath(); ctx.fill();
-      }
+    // ---------- Figuren auf zwei Beinen ----------
+    const big = k === 'troll' || k === 'zyklop';
+    const legCol = k === 'skelett' ? '#f1ede2' : k === 'ritter' ? '#2b2d35' : skin;
+    const legW = (k === 'skelett' ? 2.2 : big ? 4.5 : 3.2) * u;
+    const hipY = (big ? 5 : 4) * u, footY = 12 * u;
+    // Umhang des schwarzen Ritters (hinter allem)
+    if (k === 'ritter') {
+      const cw = Math.sin(S.time * 7 + e.seed) * 1.5 * u - (moving ? 2 * u : 0);
+      ctx.fillStyle = '#8a1c1c';
+      ctx.beginPath(); ctx.moveTo(-5 * u, -5 * u); ctx.lineTo(5 * u, -5 * u);
+      ctx.lineTo(4 * u + cw, 12 * u); ctx.lineTo(0 + cw, 10 * u); ctx.lineTo(-4 * u + cw, 13 * u); ctx.lineTo(-9 * u + cw, 11 * u); ctx.closePath(); ctx.fill();
     }
-    const lx = Math.cos(e.dir) * r * 0.15, ly = Math.sin(e.dir) * r * 0.15;
-    if (k === 'zyklop') {
-      // ein großes Auge und ein Horn
-      ctx.fillStyle = '#e8e0c8';
-      ctx.beginPath(); ctx.moveTo(-r * 0.15, -r * 0.85); ctx.lineTo(0, -r * 1.35); ctx.lineTo(r * 0.15, -r * 0.85); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -r * 0.2, r * 0.38, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = T.dark; ctx.lineWidth = 2; ctx.stroke();
-      ctx.fillStyle = '#d4a017'; ctx.beginPath(); ctx.arc(lx * 1.5, -r * 0.2 + ly * 1.5, r * 0.2, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(lx * 1.5, -r * 0.2 + ly * 1.5, r * 0.1, 0, Math.PI * 2); ctx.fill();
+    // Beine
+    const out = k === 'skelett' ? '#8c867a' : dark;
+    limb(-3 * u, hipY, (-3 - walk * 3) * u, footY, legW, legCol, out);
+    limb(3 * u, hipY, (3 + walk * 3) * u, footY, legW, legCol, out);
+    // Füße / Stiefel
+    ctx.fillStyle = k === 'ritter' ? '#111' : k === 'skelett' ? '#d8d2c2' : '#4a2e16';
+    for (const [fx, fs] of [[-3 - walk * 3, 1], [3 + walk * 3, 1]]) { ctx.beginPath(); ctx.ellipse((fx + 1) * u, footY + u * 0.5, 2.6 * u * fs, 1.5 * u, 0, 0, Math.PI * 2); ctx.fill(); }
+    // hinterer Arm (beim Ritter mit Schild)
+    const bsh = { x: -6 * u, y: -3 * u }, bhand = { x: -7 * u - walk * 1.5 * u, y: 4 * u };
+    limb(bsh.x, bsh.y, bhand.x, bhand.y, (k === 'skelett' ? 2 : big ? 4 : 3) * u, k === 'ritter' ? '#2b2d35' : k === 'skelett' ? '#f1ede2' : skin, out);
+
+    // Körper
+    if (k === 'skelett') {
+      ctx.strokeStyle = '#f1ede2'; ctx.lineWidth = 2 * u;
+      ctx.beginPath(); ctx.moveTo(0, -6 * u); ctx.lineTo(0, 4 * u); ctx.stroke();           // Wirbelsäule
+      for (let i = 0; i < 4; i++) {                                                         // Rippen
+        const yy = (-5 + i * 2.3) * u, w = (5.5 - i * 0.6) * u;
+        ctx.beginPath(); ctx.moveTo(-w, yy + u); ctx.quadraticCurveTo(0, yy - 2 * u, w, yy + u); ctx.stroke();
+      }
+      blob(0, 4.5 * u, 4.5 * u, 2 * u, '#f1ede2', '#8c867a', 1);                          // Becken
+    } else if (k === 'ritter') {
+      ctx.fillStyle = skin; ctx.strokeStyle = '#555c66'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(-6 * u, -6 * u); ctx.lineTo(6 * u, -6 * u); ctx.lineTo(5 * u, 5 * u); ctx.lineTo(-5 * u, 5 * u); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#555c66'; ctx.beginPath(); ctx.moveTo(-5 * u, -1 * u); ctx.lineTo(5 * u, -1 * u); ctx.moveTo(-5 * u, 2 * u); ctx.lineTo(5 * u, 2 * u); ctx.stroke();
+      ctx.fillStyle = '#c0141c'; ctx.beginPath(); ctx.moveTo(0, -5 * u); ctx.lineTo(2 * u, -3 * u); ctx.lineTo(0, -1 * u); ctx.lineTo(-2 * u, -3 * u); ctx.closePath(); ctx.fill();
     } else {
-      for (const sd of [-1, 1]) {
-        ctx.fillStyle = k === 'fledermaus' ? '#ffe14d' : '#fff';
-        ctx.beginPath(); ctx.arc(sd * r * 0.38, -r * 0.15, r * 0.28, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#c0141c'; ctx.beginPath(); ctx.arc(sd * r * 0.38 + lx, -r * 0.15 + ly, r * 0.14, 0, Math.PI * 2); ctx.fill();
+      const bw = (big ? 8.5 : 6) * u, bh = (big ? 8 : 6.5) * u;
+      blob(0, 0, bw, bh, skin, dark, 2);                                                    // Bauch
+      ctx.fillStyle = 'rgba(255,255,255,.15)'; ctx.beginPath(); ctx.ellipse(1.5 * u, 1 * u, bw * 0.55, bh * 0.6, 0, 0, Math.PI * 2); ctx.fill();
+      // Kleidung
+      const cloth = k === 'goblin' ? '#7a4a22' : k === 'ork' ? '#5a3a1a' : k === 'troll' ? '#6b5530' : '#6b4226';
+      ctx.fillStyle = cloth;
+      ctx.beginPath(); ctx.moveTo(-bw * 0.95, bh * 0.35); ctx.lineTo(bw * 0.95, bh * 0.35); ctx.lineTo(bw * 0.7, bh * 1.05);
+      ctx.lineTo(bw * 0.25, bh * 0.85); ctx.lineTo(-bw * 0.2, bh * 1.1); ctx.lineTo(-bw * 0.7, bh * 0.9); ctx.closePath(); ctx.fill();
+      if (k === 'goblin') {            // Lederweste mit Riemen
+        ctx.strokeStyle = '#4a2e16'; ctx.lineWidth = 1.6 * u;
+        ctx.beginPath(); ctx.moveTo(-4 * u, -5 * u); ctx.lineTo(4 * u, 3 * u); ctx.stroke();
+      }
+      if (k === 'zyklop') {            // Fellflecken und Gürtel
+        ctx.fillStyle = '#3a2410';
+        for (const [px, py] of [[-4, 7], [2, 7.5], [5, 6]]) { ctx.beginPath(); ctx.arc(px * u, py * u, 1.1 * u, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = '#9a9a9a'; ctx.fillRect(-bw * 0.95, bh * 0.25, bw * 1.9, 1.6 * u);
+      }
+      if (k === 'troll') {             // Moos auf den Schultern
+        ctx.fillStyle = '#5c8a3a';
+        for (const sx of [-6, -3, 4, 7]) { ctx.beginPath(); ctx.arc(sx * u, -6.5 * u, 1.8 * u, 0, Math.PI * 2); ctx.fill(); }
       }
     }
-    // Mund mit Zähnen
-    ctx.strokeStyle = T.dark; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(-r * 0.4, r * 0.4); ctx.lineTo(r * 0.4, r * 0.4); ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.moveTo(-r * 0.3, r * 0.4); ctx.lineTo(-r * 0.22, r * 0.62); ctx.lineTo(-r * 0.14, r * 0.4); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(r * 0.14, r * 0.4); ctx.lineTo(r * 0.22, r * 0.62); ctx.lineTo(r * 0.3, r * 0.4); ctx.fill();
+    // Schild des schwarzen Ritters am hinteren Arm
+    if (k === 'ritter') {
+      const sx = bhand.x - 1 * u, sy = bhand.y - 1 * u;
+      ctx.fillStyle = '#3a0d10'; ctx.strokeStyle = '#999'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(sx - 4 * u, sy - 5 * u); ctx.lineTo(sx + 4 * u, sy - 5 * u); ctx.lineTo(sx + 4 * u, sy + 1 * u);
+      ctx.quadraticCurveTo(sx + 4 * u, sy + 5 * u, sx, sy + 7 * u); ctx.quadraticCurveTo(sx - 4 * u, sy + 5 * u, sx - 4 * u, sy + 1 * u); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#e6e0d0'; ctx.beginPath(); ctx.arc(sx, sy, 1.8 * u, 0, Math.PI * 2); ctx.fill();   // kleiner Totenkopf
+      ctx.fillStyle = '#3a0d10'; ctx.fillRect(sx - 1 * u, sy - 0.5 * u, 0.7 * u, 0.7 * u); ctx.fillRect(sx + 0.3 * u, sy - 0.5 * u, 0.7 * u, 0.7 * u);
+    }
+    // Schulterpanzer des Orks
+    if (k === 'ork') {
+      blob(sh.x - 0.5 * u, sh.y - 0.5 * u, 3.5 * u, 2.8 * u, '#8d939c', '#4b4f57', 1.5);
+      ctx.fillStyle = '#d8d8d8'; ctx.beginPath(); ctx.moveTo(sh.x - u, sh.y - 3 * u); ctx.lineTo(sh.x, sh.y - 6 * u); ctx.lineTo(sh.x + u, sh.y - 3 * u); ctx.closePath(); ctx.fill();
+    }
+
+    // Kopf
+    const hx = (k === 'troll' ? 3 : 0.5) * u, hy = (k === 'troll' ? -8 : big ? -11 : -10) * u;
+    const hr = (k === 'troll' ? 4.5 : k === 'zyklop' ? 6 : k === 'goblin' ? 5.2 : 5) * u;
+    if (k === 'goblin') {               // große spitze Ohren
+      ctx.fillStyle = skin; ctx.strokeStyle = dark; ctx.lineWidth = 1.5;
+      for (const sd of [-1, 1]) { ctx.beginPath(); ctx.moveTo(hx + sd * 3 * u, hy - 1 * u); ctx.lineTo(hx + sd * 11 * u, hy - 5 * u); ctx.lineTo(hx + sd * 4 * u, hy + 2.5 * u); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+    }
+    if (k === 'ritter') {               // Hörnerhelm
+      ctx.fillStyle = '#d8d0c0';
+      for (const sd of [-1, 1]) { ctx.beginPath(); ctx.moveTo(hx + sd * 3 * u, hy - 3 * u); ctx.quadraticCurveTo(hx + sd * 10 * u, hy - 4 * u, hx + sd * 8 * u, hy - 11 * u); ctx.quadraticCurveTo(hx + sd * 7 * u, hy - 6 * u, hx + sd * 1.5 * u, hy - 4.5 * u); ctx.closePath(); ctx.fill(); }
+    }
+    const headCol = k === 'skelett' ? '#f1ede2' : k === 'ritter' ? '#33363f' : skin;
+    blob(hx, hy, hr, hr * 0.95, e.flash > 0 ? '#ffffff' : headCol, k === 'skelett' ? '#8c867a' : k === 'ritter' ? '#111' : dark, 2);
+    const ex = hx + 1.5 * u;            // Gesicht schaut nach vorne
+    if (k === 'skelett') {
+      ctx.fillStyle = '#2a2622';
+      ctx.beginPath(); ctx.arc(ex - 2 * u, hy - 0.5 * u, 1.6 * u, 0, Math.PI * 2); ctx.arc(ex + 2 * u, hy - 0.5 * u, 1.6 * u, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ff3b3b'; ctx.shadowColor = '#ff3b3b'; ctx.shadowBlur = 5;
+      ctx.beginPath(); ctx.arc(ex - 2 * u, hy - 0.5 * u, 0.6 * u, 0, Math.PI * 2); ctx.arc(ex + 2 * u, hy - 0.5 * u, 0.6 * u, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#2a2622'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(ex - 2.5 * u, hy + 3 * u); ctx.lineTo(ex + 2.5 * u, hy + 3 * u);
+      for (let i = -2; i <= 2; i++) { ctx.moveTo(ex + i * u, hy + 2.2 * u); ctx.lineTo(ex + i * u, hy + 3.8 * u); }
+      ctx.stroke();
+    } else if (k === 'ritter') {
+      ctx.fillStyle = '#0a0a0a'; ctx.fillRect(hx - 3.5 * u, hy - 1.5 * u, 8 * u, 2.4 * u);
+      ctx.fillStyle = '#ff2a2a'; ctx.shadowColor = '#ff2a2a'; ctx.shadowBlur = 8;
+      ctx.fillRect(ex - 2.5 * u, hy - 1 * u, 1.8 * u, 1.3 * u); ctx.fillRect(ex + 1 * u, hy - 1 * u, 1.8 * u, 1.3 * u);
+      ctx.shadowBlur = 0;
+    } else if (k === 'zyklop') {
+      ctx.fillStyle = '#e8e0c8';        // Horn
+      ctx.beginPath(); ctx.moveTo(hx - 1.2 * u, hy - 5 * u); ctx.lineTo(hx + 0.5 * u, hy - 10 * u); ctx.lineTo(hx + 1.5 * u, hy - 5 * u); ctx.closePath(); ctx.fill();
+      blob(ex, hy - 0.5 * u, 3 * u, 2.8 * u, '#fff', dark, 1.5);
+      blob(ex + 0.8 * u, hy - 0.5 * u, 1.6 * u, 1.6 * u, '#d4a017');
+      blob(ex + 1 * u, hy - 0.5 * u, 0.8 * u, 0.8 * u, '#111');
+      ctx.strokeStyle = dark; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(ex - 3 * u, hy - 3.5 * u); ctx.lineTo(ex + 3 * u, hy - 2.8 * u); ctx.stroke();   // böse Braue
+      ctx.beginPath(); ctx.moveTo(ex - 2.5 * u, hy + 3.5 * u); ctx.quadraticCurveTo(ex, hy + 2.5 * u, ex + 2.5 * u, hy + 3.5 * u); ctx.stroke();
+    } else {
+      // Augen mit böser Braue
+      const eyeCol = k === 'goblin' ? '#ffe14d' : '#fff';
+      for (const dx of [-1.8, 1.8]) {
+        blob(ex + dx * u, hy - 0.5 * u, 1.5 * u, 1.4 * u, eyeCol);
+        blob(ex + dx * u + 0.5 * u, hy - 0.3 * u, 0.75 * u, 0.9 * u, k === 'goblin' ? '#111' : '#c0141c');
+      }
+      ctx.strokeStyle = dark; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(ex - 3.3 * u, hy - 3 * u); ctx.lineTo(ex - 0.5 * u, hy - 2 * u);
+      ctx.moveTo(ex + 3.3 * u, hy - 3 * u); ctx.lineTo(ex + 0.5 * u, hy - 2 * u); ctx.stroke();
+      // Mund
+      ctx.strokeStyle = dark; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(ex - 2 * u, hy + 2.5 * u); ctx.lineTo(ex + 2 * u, hy + 2.5 * u); ctx.stroke();
+      if (k === 'ork' || k === 'troll') {   // Hauer
+        ctx.fillStyle = '#fffbe8';
+        for (const dx of [-1.6, 1.6]) { ctx.beginPath(); ctx.moveTo(ex + (dx - 0.6) * u, hy + 2.5 * u); ctx.lineTo(ex + dx * u, hy + 0.2 * u); ctx.lineTo(ex + (dx + 0.6) * u, hy + 2.5 * u); ctx.closePath(); ctx.fill(); }
+      } else {                              // spitze Zähne
+        ctx.fillStyle = '#fff';
+        for (const dx of [-1, 1]) { ctx.beginPath(); ctx.moveTo(ex + (dx - 0.5) * u, hy + 2.5 * u); ctx.lineTo(ex + dx * u, hy + 3.8 * u); ctx.lineTo(ex + (dx + 0.5) * u, hy + 2.5 * u); ctx.closePath(); ctx.fill(); }
+      }
+      if (k === 'ork') {                    // Irokesenfrisur
+        ctx.fillStyle = '#1a1a1a';
+        for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(hx + (i * 1.5 - 0.8) * u, hy - hr + u); ctx.lineTo(hx + i * 1.5 * u - 0.5 * u, hy - hr - 3.5 * u); ctx.lineTo(hx + (i * 1.5 + 0.8) * u, hy - hr + u); ctx.closePath(); ctx.fill(); }
+      }
+      if (k === 'troll') {                  // Moos-Haare
+        ctx.fillStyle = '#5c8a3a';
+        for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.arc(hx + i * 2 * u, hy - hr + 0.5 * u, 1.8 * u, 0, Math.PI * 2); ctx.fill(); }
+      }
+    }
+
+    // Waffe (in der vorderen Hand)
+    const L = (k === 'zyklop' ? 18 : k === 'troll' ? 16 : k === 'ritter' ? 16 : k === 'ork' ? 13 : k === 'skelett' ? 12 : 9) * u;
+    const tipX = hand.x + wx * L, tipY = hand.y + wy * L;
+    if (k === 'goblin') {                   // Dolch
+      limb(hand.x, hand.y, hand.x + wx * 2 * u, hand.y + wy * 2 * u, 2 * u, '#4a2e16');
+      limb(hand.x + wx * 2 * u, hand.y + wy * 2 * u, tipX, tipY, 2.2 * u, '#dfe4ea', '#6b7480');
+    } else if (k === 'ork') {               // Axt
+      limb(hand.x - wx * 2 * u, hand.y - wy * 2 * u, tipX, tipY, 2 * u, '#6b4520');
+      ctx.fillStyle = '#9aa0a8'; ctx.strokeStyle = '#4b4f57'; ctx.lineWidth = 1.2;
+      const px = -wy, py = wx, ax = hand.x + wx * L * 0.8, ay = hand.y + wy * L * 0.8;
+      ctx.beginPath(); ctx.moveTo(ax - wx * 3 * u, ay - wy * 3 * u);
+      ctx.quadraticCurveTo(ax + px * 7 * u, ay + py * 7 * u, ax + wx * 3 * u, ay + wy * 3 * u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    } else if (k === 'skelett') {           // rostiges Schwert
+      limb(hand.x, hand.y, hand.x + wx * 2.5 * u, hand.y + wy * 2.5 * u, 2 * u, '#5a3a1a');
+      limb(hand.x + wx * 2.5 * u - wy * 2.5 * u, hand.y + wy * 2.5 * u + wx * 2.5 * u, hand.x + wx * 2.5 * u + wy * 2.5 * u, hand.y + wy * 2.5 * u - wx * 2.5 * u, 1.5 * u, '#7a5a3a');
+      limb(hand.x + wx * 2.5 * u, hand.y + wy * 2.5 * u, tipX, tipY, 2.2 * u, '#b07a4a', '#6b4520');
+    } else if (k === 'ritter') {            // großes Schwert
+      limb(hand.x, hand.y, hand.x + wx * 3 * u, hand.y + wy * 3 * u, 2.2 * u, '#3a0d10');
+      limb(hand.x + wx * 3 * u - wy * 3.5 * u, hand.y + wy * 3 * u + wx * 3.5 * u, hand.x + wx * 3 * u + wy * 3.5 * u, hand.y + wy * 3 * u - wx * 3.5 * u, 1.8 * u, '#8a1c1c');
+      limb(hand.x + wx * 3 * u, hand.y + wy * 3 * u, tipX, tipY, 2.8 * u, '#c9ced6', '#555c66');
+    } else {                                // Keule (Troll: Baumstamm, Zyklop: mit Stacheln)
+      limb(hand.x - wx * 2 * u, hand.y - wy * 2 * u, tipX, tipY, (k === 'troll' ? 3.5 : 3) * u, '#6b4520', '#3a2410');
+      blob(tipX, tipY, 3.5 * u, 3.5 * u, '#5a3a1a', '#3a2410', 1.5);
+      if (k === 'zyklop') {
+        ctx.fillStyle = '#ddd';
+        for (let i = 0; i < 7; i++) { const aa = i / 7 * Math.PI * 2; ctx.beginPath(); ctx.arc(tipX + Math.cos(aa) * 3.8 * u, tipY + Math.sin(aa) * 3.8 * u, 1 * u, 0, Math.PI * 2); ctx.fill(); }
+      }
+    }
+    // vorderer Arm über der Waffe
+    limb(sh.x, sh.y, hand.x, hand.y, (k === 'skelett' ? 2 : big ? 4 : 3) * u, k === 'ritter' ? '#2b2d35' : k === 'skelett' ? '#f1ede2' : skin, out);
+    blob(hand.x, hand.y, (big ? 2.4 : 1.8) * u, (big ? 2.4 : 1.8) * u, k === 'ritter' ? '#111' : k === 'skelett' ? '#f1ede2' : skin, out, 1);
   }
+
   if (e.swim) {
-    // im Wasser: untere Hälfte unter Wasser, Wellenring drumherum
-    ctx.fillStyle = 'rgba(46,124,196,.85)';
-    ctx.beginPath(); ctx.ellipse(0, r * 0.45, r * 1.35, r * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+    // im Wasser: Beine und Bauch unter Wasser, Wellenring drumherum
+    ctx.fillStyle = 'rgba(46,124,196,.9)';
+    ctx.beginPath(); ctx.ellipse(0, 7 * u, 12 * u, 7 * u, 0, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 2;
     const rr = 1 + (S.time * 1.5 + e.seed) % 1 * 0.5;
-    ctx.beginPath(); ctx.ellipse(0, r * 0.45, r * 1.35 * rr, r * 0.7 * rr, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(0, 5 * u, 12 * u * rr, 5 * u * rr, 0, 0, Math.PI * 2); ctx.stroke();
   }
   ctx.restore();
-  if (e.hp < e.maxHp) hpBar(e.x, e.y - r - 12 + (fly ? bob : 0), Math.max(22, r * 2), e.hp / e.maxHp, '#e84a3c');
+  if (e.hp < e.maxHp) hpBar(e.x, e.y + bob - 20 * u, Math.max(22, r * 2), e.hp / e.maxHp, '#e84a3c');
 }
 
 // Look-Stufen: 1 = Gold (ab Stufe 4), 2 = Diamant (ab Stufe 10), 3 = Magie (ab Stufe 15)
