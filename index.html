@@ -95,7 +95,7 @@ const ENEMY_TYPES = {
 };
 const SQUAD_SIZE = 10;     // Kämpfer pro Haus
 const SQUAD_KILLS = 20;    // nach so vielen Siegen verschwinden sie
-const SQUAD_COLORS = ['#3b7dd8', '#9b4fc4', '#e0662f'];
+const SQUAD_COLORS = ['#3b7dd8', '#9b4fc4', '#e0662f', '#2e9e4f'];   // Haus 4 (grün): Bogenschützen
 
 const UPGRADES = [
   { id: 'wall',    ico: '🧱', nm: 'Dickere Mauern',   base: 10, mult: 1.35 },
@@ -123,11 +123,12 @@ function newGame() {
     queue: [], spawnCd: 0, betweenTimer: 2.5, inWave: false,
     towerCd: [0.5, 0.9, 1.3, 0.2],
     houses: [
-      { x: 422, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 0 },
-      { x: 500, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 1 },
-      { x: 578, y: 325, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 2 },
+      { x: 440, y: 285, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 0, hold: null },
+      { x: 560, y: 285, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 1, hold: null },
+      { x: 440, y: 390, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 2, hold: null },
+      { x: 560, y: 390, active: false, kills: 0, toSpawn: 0, spawnCd: 0, id: 3, hold: null, archer: true },   // Bogenschützen
     ],
-    banner: { text: 'Mach dich bereit!', t: 2.5 }, shake: 0, time: 0,
+    banner: { text: 'Mach dich bereit!', t: 2.5 }, shake: 0, time: 0, sel: null, lastSTap: null,
   };
 }
 
@@ -279,7 +280,7 @@ function buy(id) {
   if (id === 'speed') { S.arrowInterval *= 0.8; addText(500, 200, 'Pfeile schneller!', '#ffe27a'); }
   if (id === 'soldier') {
     S.soldierDmg += 1; S.soldierHp += 5;
-    for (const s of S.soldiers) { s.maxHp = S.soldierHp; s.hp += 5; s.r = 12 * knightScale(); puff(s.x, s.y, '#ffe27a', 6); }
+    for (const s of S.soldiers) { s.maxHp = s.archer ? Math.round(S.soldierHp * 0.7) : S.soldierHp; s.hp += 5; s.r = 12 * knightScale(); puff(s.x, s.y, '#ffe27a', 6); }
     addText(500, 200, 'Kämpfer stärker!', '#ffe27a');
   }
   if (id === 'bridge') { puff(GATE.x, GATE.y + 30, '#ffe27a', 14); addText(500, 200, S.lv.bridge === 2 ? 'Stacheln am Tor!' : 'Zugbrücke stärker!', '#ffe27a'); }
@@ -329,8 +330,9 @@ function update(dt) {
       if (h.spawnCd <= 0) {
         h.toSpawn--; h.spawnCd = 0.25;
         const idx = SQUAD_SIZE - 1 - h.toSpawn;
-        S.soldiers.push({ house: h, x: h.x, y: h.y + 18, r: 12 * knightScale(), hp: S.soldierHp, maxHp: S.soldierHp,
-          path: [{ x: h.x, y: 445 }, { x: GATE.x + rnd(-10, 10), y: GATE.y + 2 }, { x: GATE.x + rnd(-8, 8), y: GATE.y + 40 }, { x: GATE.x + rnd(-14, 14), y: GATE.y + MOAT.outer + 18 }],
+        const hp = h.archer ? Math.round(S.soldierHp * 0.7) : S.soldierHp;
+        S.soldiers.push({ house: h, archer: !!h.archer, x: h.x, y: h.y + 18, r: 12 * knightScale(), hp, maxHp: hp,
+          path: [{ x: GATE.x + (h.x < GATE.x ? -8 : 8), y: h.y + 28 }, { x: GATE.x + rnd(-10, 10), y: GATE.y + 2 }, { x: GATE.x + rnd(-8, 8), y: GATE.y + 40 }, { x: GATE.x + rnd(-14, 14), y: GATE.y + MOAT.outer + 18 }],
           atkCd: 0, swing: 0, dir: Math.PI / 2, idx, dead: false });
       }
     } else if (!S.soldiers.some(s => s.house === h && !s.dead)) {
@@ -348,19 +350,38 @@ function update(dt) {
       if (moveTo(s, s.path[0].x, s.path[0].y, 80, dt)) s.path.shift();
       continue;
     }
+    // Ziel suchen. Hat die Truppe einen Platz bekommen, kämpft sie nur gegen Gegner in der Nähe davon.
+    const hold = s.house.hold, range = s.archer ? 170 : 0;
     let target = null, bd = 1e9;
-    for (const e of S.enemies) { if (e.dead) continue; const d = dist(s, e); if (d < bd) { bd = d; target = e; } }
+    for (const e of S.enemies) {
+      if (e.dead) continue;
+      if (hold && dist(e, hold) > (s.archer ? range + 30 : 120)) continue;
+      const d = dist(s, e); if (d < bd) { bd = d; target = e; }
+    }
+    s.atkCd = Math.max(0, s.atkCd - dt);
+    let busy = false;
     if (target) {
-      if (bd > s.r + target.r + 3) walkAround(s, target.x, target.y, 75, dt);
-      else {
+      const reach = s.archer ? range : s.r + target.r + 3;
+      if (bd <= reach) {
+        busy = true;
         s.dir = Math.atan2(target.y - s.y, target.x - s.x);
-        s.atkCd -= dt;
-        if (s.atkCd <= 0) { s.atkCd = 0.6; s.swing = 0.2; hitEnemy(target, S.soldierDmg, s.house); }
+        if (s.atkCd <= 0) {
+          if (s.archer) {   // Bogenschütze: schießt einen Pfeil
+            s.atkCd = 1.1; s.swing = 0.25;
+            S.arrows.push({ x: s.x, y: s.y - 8, target, dir: s.dir, dmg: S.soldierDmg, house: s.house, small: true });
+          } else { s.atkCd = 0.6; s.swing = 0.2; hitEnemy(target, S.soldierDmg, s.house); }
+        }
+      } else if (!(s.archer && hold)) { busy = true; walkAround(s, target.x, target.y, s.archer ? 70 : 75, dt); }
+    }
+    if (!busy) {
+      let gx, gy;
+      if (hold) {             // am befohlenen Platz in zwei Reihen aufstellen
+        gx = hold.x + (s.idx % 5 - 2) * 22; gy = hold.y + (Math.floor(s.idx / 5) - 0.5) * 24;
+      } else if (s.archer) {  // Bogenschützen warten links und rechts vom Tor
+        gx = GATE.x + (s.idx < 5 ? -1 : 1) * (140 + (s.idx % 5) * 24); gy = GATE.y + MOAT.outer + 24;
+      } else {                // Wache vor dem Tor
+        gx = GATE.x + (s.idx - 4.5) * 26; gy = GATE.y + MOAT.outer + 34 + s.house.id * 30;
       }
-    } else {
-      // Wache vor dem Tor
-      const gx = GATE.x + (s.idx - 4.5) * 26;
-      const gy = GATE.y + MOAT.outer + 34 + s.house.id * 30;
       walkAround(s, gx, gy, 60, dt);
     }
     // nicht durch die Mauer laufen
@@ -467,8 +488,8 @@ function update(dt) {
     if (moveTo(a, a.target.x, a.target.y, 480, dt) || dist(a, a.target) < a.target.r) {
       a.done = true;
       const tx = a.target.x, ty = a.target.y;
-      hitEnemy(a.target, S.arrowDmg, null);
-      if (S.lv.fire > 0) {
+      hitEnemy(a.target, a.dmg || S.arrowDmg, a.house || null);
+      if (S.lv.fire > 0 && !a.small) {
         puff(tx, ty, '#ff8a2a', 6);
         for (const e of S.enemies) if (e !== a.target && !e.dead && Math.hypot(e.x - tx, e.y - ty) < 30 + S.lv.fire * 8) hitEnemy(e, S.lv.fire, null);
       }
@@ -512,9 +533,49 @@ function update(dt) {
 }
 
 // ====== Tippen / Klicken ======
-function onTap(x, y) {
+function soldierAt(x, y) {
+  let best = null, bd = 1e9;
+  for (const s of S.soldiers) {
+    if (s.dead) continue;
+    const d = Math.hypot(s.x - x, s.y - y);
+    if (d < 14 * knightScale() + 8 && d < bd) { bd = d; best = s; }
+  }
+  return best;
+}
+function onTap(x, y, hitSoldier) {
   if (phase !== 'play') return;
   S.fx.push({ x, y, vx: 0, vy: 0, t: 0, life: 0.25, ring: true });
+  // Doppelt auf einen Kämpfer tippen: seine Truppe auswählen
+  const sol = hitSoldier || soldierAt(x, y);
+  if (sol) {
+    const dbl = S.lastSTap && S.lastSTap.house === sol.house && S.time - S.lastSTap.t < 0.5;
+    S.lastSTap = { house: sol.house, t: S.time };
+    if (dbl) {
+      S.lastSTap = null;
+      if (S.sel === sol.house) { S.sel = null; addText(sol.x, sol.y - 30, 'Abgewählt', '#ffffff'); }
+      else { S.sel = sol.house; addText(sol.x, sol.y - 30, 'Ausgewählt!', '#ffe27a'); }
+      return;
+    }
+    if (S.sel) return;
+  }
+  // Ausgewählte Truppe: dieser Tipp sagt ihr, wo sie hingehen und bleiben soll
+  if (S.sel) {
+    const h = S.sel;
+    if (!S.soldiers.some(s => s.house === h)) S.sel = null;
+    else {
+      if (Math.abs(x - h.x) < 36 && Math.abs(y - h.y) < 36) {   // aufs eigene Haus: wieder frei kämpfen
+        h.hold = null; S.sel = null; addText(h.x, h.y - 40, 'Kämpfen wieder frei!', '#ffe27a'); return;
+      }
+      const m = MOAT.outer + 12;
+      if (x > WALL.l - m && x < WALL.r + m && y > WALL.t - m && y < WALL.b + m) {
+        addText(x, y - 20, 'Da kommen sie nicht hin!', '#ffb36b'); return;
+      }
+      h.hold = { x: clamp(x, 30, W - 30), y: clamp(y, 60, H - 30) };
+      S.sel = null;
+      addText(h.hold.x, h.hold.y - 34, (h.archer ? 'Bogenschützen' : 'Ritter') + ' bleiben hier!', '#ffe27a');
+      return;
+    }
+  }
   // Münzen einsammeln
   let got = false;
   for (const c of S.coinsOnGround) if (!c.fly && Math.hypot(c.x - x, c.y - y) < 40) { collectCoin(c); got = true; }
@@ -648,7 +709,7 @@ function drawCastle() {
   for (let i = 0; i < 6; i++) { ctx.beginPath(); ctx.arc(400 + i * 40, 420 + (i % 2) * 18, 7, 0, Math.PI * 2); ctx.fill(); }
   // Weg zum Tor
   ctx.fillStyle = '#c4a56c';
-  ctx.fillRect(GATE.x - 18, 360, 36, WALL.b - 360);
+  ctx.fillRect(GATE.x - 18, 270, 36, WALL.b - 270);
 
   // Mauern
   // Mauern: jede Stufe "Dickere Mauern" macht sie dicker
@@ -771,6 +832,11 @@ function drawCastle() {
     ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.stroke();
     ctx.fillStyle = '#6b3f1d'; ctx.fillRect(x - 7, y + 6, 14, 18);
     ctx.fillStyle = '#7fc6ff'; ctx.fillRect(x - 22, y + 2, 9, 9); ctx.fillRect(x + 13, y + 2, 9, 9);
+    if (h.archer) {   // Zielscheibe auf dem Dach der Bogenschützen
+      for (const [rr, c] of [[8, '#ffffff'], [6, '#e63946'], [4, '#ffffff'], [2, '#e63946']]) {
+        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y - 17, rr, 0, Math.PI * 2); ctx.fill();
+      }
+    }
     // Beschriftung
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     if (!h.active) {
@@ -1132,7 +1198,7 @@ function pulse(speed) { return 0.5 + 0.5 * Math.sin(S.time * (speed || 4)); }
 function wallThick() { return 16 + Math.min(S.lv.wall, 6) * 4; }
 function towerH() { return Math.min(S.lv.arrow, 6) * 6; }
 function knightScale() { return 1 + Math.min(S.lv.soldier, 6) * 0.1; }
-const SQUAD_DARK = ['#1f4f99', '#5e2b80', '#9a3a14'];
+const SQUAD_DARK = ['#1f4f99', '#5e2b80', '#9a3a14', '#17602c'];
 function drawSoldier(s) {
   const col = SQUAD_COLORS[s.house.id], dark = SQUAD_DARK[s.house.id];
   const moving = s.lx !== undefined && Math.hypot(s.x - s.lx, s.y - s.ly) > 0.05;
@@ -1161,7 +1227,9 @@ function drawSoldier(s) {
   ctx.quadraticCurveTo(-10, 4, -6, -4); ctx.closePath(); ctx.fill();
   ctx.restore();
 
+  if (s.archer) drawBow(s);
   // Schwert (mit Schwung-Spur beim Zuschlagen)
+  else {
   const sa = s.dir + (s.swing > 0 ? -1.1 + (0.2 - s.swing) * 11 : 0.6);
   if (s.swing > 0) {
     ctx.strokeStyle = 'rgba(255,255,255,' + (s.swing * 4) + ')'; ctx.lineWidth = 4;
@@ -1180,6 +1248,7 @@ function drawSoldier(s) {
   ctx.shadowBlur = 0;
   ctx.strokeStyle = '#9aa6b2'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(cx * 11, cy * 11); ctx.lineTo(cx * 23, cy * 23); ctx.stroke();
+  }
 
   // Rüstung
   // Rüstung: Silber, ab Stufe 4 Gold, ab 10 Diamant, ab 15 Magie
@@ -1193,6 +1262,7 @@ function drawSoldier(s) {
   ctx.fillStyle = col; ctx.fillRect(-4, -2, 8, 11);
   ctx.fillStyle = '#ffcf3f'; ctx.fillRect(-5, 4, 10, 2);
 
+  if (s.archer) { drawHood(s, flip); ctx.restore(); if (s.hp < s.maxHp) hpBar(s.x, s.y - 24 * knightScale(), 20, s.hp / s.maxHp, '#4ad66d'); return; }
   // Schild mit Stern
   ctx.save(); ctx.scale(flip, 1); ctx.translate(-8, 3);
   ctx.fillStyle = col; ctx.strokeStyle = '#ffcf3f'; ctx.lineWidth = 1.8;
@@ -1222,6 +1292,51 @@ function drawSoldier(s) {
 
   ctx.restore();
   if (s.hp < s.maxHp) hpBar(s.x, s.y - 24 * knightScale(), 20, s.hp / s.maxHp, '#4ad66d');
+}
+// Bogenschützen: Bogen mit Sehne, Köcher und grüne Kapuze
+function drawBow(s) {
+  const d = s.dir, bx = Math.cos(d) * 9, by = Math.sin(d) * 9 + 2;
+  // Köcher auf dem Rücken
+  ctx.fillStyle = '#7a4a1e'; ctx.save(); ctx.translate(-Math.cos(d) * 6, -4); ctx.rotate(0.4);
+  ctx.fillRect(-2.5, -9, 5, 12); ctx.fillStyle = '#e8e2d0'; ctx.fillRect(-2, -12, 1.5, 4); ctx.fillRect(0.5, -12, 1.5, 4); ctx.restore();
+  const pull = s.swing > 0 ? 8 : 3;
+  const e1x = bx + Math.cos(d - 1.3) * 11, e1y = by + Math.sin(d - 1.3) * 11, e2x = bx + Math.cos(d + 1.3) * 11, e2y = by + Math.sin(d + 1.3) * 11;
+  ctx.strokeStyle = '#f2f2f2'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(e1x, e1y); ctx.lineTo(bx - Math.cos(d) * pull + Math.cos(d) * 4, by - Math.sin(d) * pull + Math.sin(d) * 4); ctx.lineTo(e2x, e2y); ctx.stroke();
+  const kT = tier(S.lv.soldier);
+  ctx.strokeStyle = ['#7a4a1e', '#e0a810', '#5fd0ff', '#b65cff'][kT]; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(bx - Math.cos(d) * 4, by - Math.sin(d) * 4, 11, d - 1.3, d + 1.3); ctx.stroke();
+  if (s.swing > 0) {   // Pfeil auf der Sehne
+    ctx.strokeStyle = '#4a3018'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(bx - Math.cos(d) * pull, by - Math.sin(d) * pull); ctx.lineTo(bx + Math.cos(d) * 10, by + Math.sin(d) * 10); ctx.stroke();
+  }
+}
+function drawHood(s, flip) {
+  ctx.save(); ctx.scale(flip, 1);
+  ctx.fillStyle = '#2e9e4f'; ctx.beginPath(); ctx.arc(0, -6, 8, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-5, -12); ctx.lineTo(-13, -7); ctx.lineTo(-6, -4); ctx.closePath(); ctx.fill();   // Kapuzenzipfel
+  ctx.strokeStyle = '#17602c'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(0, -6, 8, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#f0c8a0'; ctx.beginPath(); ctx.arc(2.5, -5.5, 4.5, 0, Math.PI * 2); ctx.fill();               // Gesicht
+  ctx.fillStyle = '#1d232b'; ctx.fillRect(2.5, -7, 1.5, 1.8); ctx.fillRect(5, -7, 1.5, 1.8);
+  ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.moveTo(-2, -13); ctx.lineTo(-8, -20); ctx.lineTo(-4, -12); ctx.closePath(); ctx.fill();  // Feder
+  ctx.restore();
+}
+// Flaggen an den befohlenen Plätzen und Ringe um die ausgewählte Truppe
+function drawOrders() {
+  for (const h of S.houses) if (h.hold) {
+    const x = h.hold.x, y = h.hold.y - 30;
+    ctx.strokeStyle = '#4a3420'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x, y + 14); ctx.lineTo(x, y - 18); ctx.stroke();
+    ctx.fillStyle = SQUAD_COLORS[h.id];
+    const wv = Math.sin(S.time * 5 + h.id) * 2;
+    ctx.beginPath(); ctx.moveTo(x, y - 18); ctx.lineTo(x + 18, y - 13 + wv); ctx.lineTo(x, y - 6); ctx.closePath(); ctx.fill();
+  }
+  if (S.sel) {
+    ctx.strokeStyle = 'rgba(255,226,122,' + (0.6 + pulse(6) * 0.4) + ')'; ctx.lineWidth = 3;
+    for (const s of S.soldiers) if (s.house === S.sel) {
+      ctx.beginPath(); ctx.ellipse(s.x, s.y + 10 * knightScale(), 15 * knightScale(), 6 * knightScale(), 0, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
 }
 function hpBar(x, y, w, f, col) {
   ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(x - w / 2 - 1, y - 1, w + 2, 6);
@@ -1267,6 +1382,10 @@ function drawHUD() {
     ctx.fillStyle = '#fff1c4'; ctx.fillText(S.banner.text, W / 2, 130);
     ctx.globalAlpha = 1;
   }
+  if (S.sel) {
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    pill((S.sel.archer ? 'Bogenschützen' : 'Ritter') + ' ausgewählt: Tippe, wo sie hin sollen!', W / 2, H - 28, 'rgba(0,0,0,.65)', '#ffe27a');
+  }
 }
 
 function draw() {
@@ -1278,6 +1397,7 @@ function draw() {
   ctx.drawImage(bg, 0, 0, W, H);
   drawCastle();
   for (const c of S.coinsOnGround) if (!c.fly) drawCoin(c.x, c.y + Math.sin(S.time * 6 + c.x) * 1.5, 8);
+  drawOrders();
   for (const s of S.soldiers) drawSoldier(s);
   for (const e of S.enemies) drawEnemy(e);
   // Pfeile
@@ -1392,7 +1512,8 @@ function showStart() {
     '<ul><li>Gegner greifen deine Burg an. Die Türme schießen von selbst.</li>' +
     '<li><b>Tippe</b> auf Gegner, um selbst zu kämpfen.</li>' +
     '<li><b>Tippe</b> auf Münzen, um sie einzusammeln.</li>' +
-    '<li><b>Tippe</b> auf die Häuser im Hof: Dann kommen 10 Kämpfer heraus. Nach 20 Siegen ruhen sie sich aus und 10 neue kommen.</li>' +
+    '<li><b>Tippe</b> auf die Häuser im Hof: Dann kommen 10 Kämpfer heraus. Nach 20 Siegen ruhen sie sich aus und 10 neue kommen. Aus dem grünen Haus kommen Bogenschützen.</li>' +
+    '<li>Tippe <b>zweimal schnell</b> auf einen Kämpfer und dann auf eine Stelle: Seine Truppe geht dorthin und bleibt da. Tippst du danach auf ihr Haus, kämpft sie wieder frei.</li>' +
     '<li>Kaufe unten mit deinen Münzen Upgrades.</li></ul>' +
     '<button class="big" id="go">Spielen!</button>' + (best ? '<p class="stat">Rekord: Welle ' + best + '</p>' : '') + '</div>';
   document.getElementById('go').onclick = () => { newGame(); phase = 'play'; overlay.className = 'hidden'; pauseBtn.style.display = 'block'; renderBar(); };
@@ -1425,7 +1546,7 @@ window.addEventListener('keydown', e => { if (e.key === 'p' || e.key === 'Escape
 
 cv.addEventListener('pointerdown', ev => {
   ev.preventDefault();
-  if (view3d && R3) { const p = pick3d(ev.clientX, ev.clientY); if (p) onTap(p.x, p.y); return; }
+  if (view3d && R3) { const p = pick3d(ev.clientX, ev.clientY); if (p) onTap(p.x, p.y, p.soldier); return; }
   const r = cv.getBoundingClientRect();
   onTap((ev.clientX - r.left) / scale, (ev.clientY - r.top) / scale);
 });
@@ -1551,7 +1672,7 @@ function buildCastle3d() {
   g.add(mesh(G.box((half + mi) * 2 + 0.6, ISLAND_Y, (half + mi) * 2 + 0.6), M('#7c6a44'), 0, ISLAND_Y / 2, 0, true));
   g.add(mesh(G.box((half + mi) * 2, 0.06, (half + mi) * 2), M('#6aa84f'), 0, ISLAND_Y + 0.02, 0, true));
   g.add(mesh(G.box(half * 2, 0.08, half * 2), M('#d8c08a'), 0, ISLAND_Y + 0.05, 0, true));
-  g.add(mesh(G.box(3.6, 0.1, 12), M('#c4a56c'), 0, ISLAND_Y + 0.07, 7, true));
+  g.add(mesh(G.box(3.6, 0.1, 21), M('#c4a56c'), 0, ISLAND_Y + 0.07, 2.5, true));
   // Mauern
   const wT = tier(lv.wall);
   const tW = wallThick() * K, hW = 5 + Math.min(lv.wall, 6) * 0.6;
@@ -1710,14 +1831,20 @@ function buildFigure(o) {
   const hY = k === 'troll' ? bY + bR * 0.9 : bY + bR * 1.1 + hR * 0.7;
   const hX = k === 'troll' ? 3 * u : 0;
   const head = new THREE.Group(); head.position.set(hX, hY, 0); g.add(head); parts.head = head;
-  const headMat = knight ? M(['#e4e9ef', '#ffd966', '#c8f4ff', '#d8b8ff'][tier(S.lv.soldier)], tier(S.lv.soldier) >= 2 ? '#104050' : null)
+  const archer = knight && o.archer;
+  const headMat = archer ? M('#2e9e4f') : knight ? M(['#e4e9ef', '#ffd966', '#c8f4ff', '#d8b8ff'][tier(S.lv.soldier)], tier(S.lv.soldier) >= 2 ? '#104050' : null)
     : k === 'skelett' ? M('#f1ede2') : k === 'ritter' ? M('#33363f') : M(skin);
   head.add(mesh(G.sph(hR, 14), headMat));
   const eye = (z, col, pup, rr) => {
     head.add(mesh(G.sph((rr || 1.4) * u, 8), M(col, col === '#ffffff' ? null : col), hR * 0.82, 0.4 * u, z, true));
     if (pup) head.add(mesh(G.sph((rr || 1.4) * 0.55 * u, 6), M(pup, pup === '#111111' ? null : pup), hR * 0.82 + 1 * u, 0.4 * u, z, true));
   };
-  if (knight) {
+  if (archer) {     // grüne Kapuze mit Gesicht und Feder
+    head.add(mesh(G.sph(hR * 0.68, 12), M('#f0c8a0'), hR * 0.5, -0.4 * u, 0));
+    for (const z of [-1.3, 1.3]) head.add(mesh(G.sph(0.6 * u, 6), M('#1d232b'), hR * 1.12, 0.2 * u, z * u, true));
+    const tip = mesh(G.cone(2.2 * u, 6 * u, 8), M('#2e9e4f'), -hR * 0.9, hR * 0.3, 0); tip.rotation.z = 1.9; head.add(tip);
+    const feather = mesh(G.box(0.4 * u, 6 * u, 1.2 * u), M('#e63946'), -1 * u, hR + 1.5 * u, 2 * u); feather.rotation.z = 0.6; head.add(feather); parts.plume = feather;
+  } else if (knight) {
     head.add(mesh(G.box(1 * u, 1.6 * u, 6 * u), M('#1d232b'), hR * 0.85, 0.3 * u, 0, true));            // Visier
     head.add(mesh(G.box(1.1 * u, 0.6 * u, 1.2 * u), M('#9fe8ff', '#40c0ff'), hR * 0.92, 0.4 * u, -1.4 * u, true));
     head.add(mesh(G.box(1.1 * u, 0.6 * u, 1.2 * u), M('#9fe8ff', '#40c0ff'), hR * 0.92, 0.4 * u, 1.4 * u, true));
@@ -1763,7 +1890,15 @@ function buildFigure(o) {
   // Waffe an der Hand (zeigt nach vorne-oben)
   const w = new THREE.Group(); w.position.set(0, -armL, 0); w.rotation.z = -1.3; arm.add(w);
   const wood = M('#6b4520');
-  if (knight) {
+  if (archer) {     // Bogen mit Sehne, Köcher auf dem Rücken
+    const kT = tier(S.lv.soldier);
+    w.rotation.z = -1.57;
+    const bow = mesh(new THREE.TorusGeometry(1.1, 0.07, 6, 16, Math.PI), M(['#7a4a1e', '#e0a810', '#5fd0ff', '#b65cff'][kT], kT >= 2 ? '#104050' : null), 0, 0.4, 0, true);
+    bow.rotation.z = -Math.PI / 2; w.add(bow);
+    w.add(mesh(G.box(0.03, 0.03, 2.2), M('#f2f2f2'), 0, 0.4, 0, true));
+    const quiver = mesh(G.cyl(0.28, 0.24, 1.3, 8), M('#7a4a1e'), -bR * 1.05, bY + 0.25, 0); quiver.rotation.z = 0.35; g.add(quiver);
+    for (const z of [-0.1, 0.1]) g.add(mesh(G.box(0.06, 0.35, 0.06), M('#e8e2d0'), -bR * 1.05 - 0.3, bY + 1.0, z, true));
+  } else if (knight) {
     const kT = tier(S.lv.soldier), bl = 2.4 + (kT >= 2 ? 0.4 : 0) + (kT >= 3 ? 0.4 : 0);
     w.add(mesh(G.box(0.25, 0.4, 0.25), M('#5a3a1a'), 0, 0.1, 0, true));
     w.add(mesh(G.box(0.25, 0.12, 1.1), M('#ffcf3f'), 0, 0.32, 0, true));
@@ -1791,7 +1926,7 @@ function buildFigure(o) {
       s.rotation.z = -Math.cos(a) * Math.PI / 2; s.rotation.x = Math.sin(a) * Math.PI / 2; w.add(s);
     }
   }
-  if (knight) {    // Schild mit Stern am hinteren Arm
+  if (knight && !archer) {    // Schild mit Stern am hinteren Arm
     const sh = mesh(G.box(0.25, 1.4, 1.1), M(SQUAD_COLORS[o.house.id]), 0.35, -armL * 0.8, -0.1); back.add(sh);
     sh.add(mesh(new THREE.OctahedronGeometry(0.28), M('#ffffff'), 0.14, 0.05, 0, true));
   }
@@ -1925,8 +2060,22 @@ function render3d() {
     m.position.set(X3(s.x), groundY(s.x, s.y), Z3(s.y));
     m.rotation.y = -s.dir;
     animFigure(s, m, 1, s.swing > 0, 0);
-    if (s.swing > 0) m.userData.parts.arm.rotation.z = -2.2 + (0.2 - s.swing) * 10;
+    if (s.swing > 0) m.userData.parts.arm.rotation.z = s.archer ? -1.6 : -2.2 + (0.2 - s.swing) * 10;
+    let ring = m.userData.selRing;
+    if (!ring) {
+      ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.25, 24), new THREE.MeshBasicMaterial({ color: '#ffe27a', side: THREE.DoubleSide }));
+      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.1; m.add(ring); m.userData.selRing = ring;
+    }
+    ring.visible = S.sel === s.house;
+    if (ring.visible) ring.scale.setScalar(1 + pulse(6) * 0.15);
   });
+  // Flaggen an den befohlenen Plätzen
+  syncList(S.houses.filter(h => h.hold), 'flag', h => {
+    const g = new THREE.Group();
+    g.add(mesh(G.cyl(0.1, 0.1, 4.5, 6), M('#4a3420'), 0, 2.25, 0));
+    const f = mesh(G.box(0.08, 1.3, 2), M(SQUAD_COLORS[h.id]), 0, 3.8, 1.0); g.add(f); g.userData.f = f;
+    return g;
+  }, (h, m) => { m.position.set(X3(h.hold.x), 0, Z3(h.hold.y - 30)); m.userData.f.rotation.y = Math.sin(S.time * 4 + h.id) * 0.25; });
   // Pfeile
   const aT = tier(S.lv.arrow), al = Math.min(S.lv.arrow, 6);
   const towerTop = ISLAND_Y + 5 + Math.min(S.lv.wall, 6) * 0.6 + 4 + towerH() * K * 1.6 + 1;
@@ -1942,8 +2091,9 @@ function render3d() {
     const d = Math.hypot(a.target.x - a.x, a.target.y - a.y);
     if (m.userData.d0 === undefined) m.userData.d0 = Math.max(1, d);
     const k = Math.min(1, d / m.userData.d0);
-    m.position.set(X3(a.x), 1.5 + (towerTop - 1.5) * k, Z3(a.y));
-    m.rotation.set(0, -a.dir, -Math.atan2((towerTop - 1.5), m.userData.d0 * K) * 0.8);
+    const top = a.small ? 2.4 : towerTop;
+    m.position.set(X3(a.x), 1.5 + (top - 1.5) * k, Z3(a.y));
+    m.rotation.set(0, -a.dir, -Math.atan2((top - 1.5), m.userData.d0 * K) * 0.8);
   });
   // Katapult-Steine
   syncList(S.stones, 'stone', () => mesh(G.sph(0.8, 10), M('#8d8d8d')), (st, m) => {
@@ -2012,15 +2162,23 @@ function drawOverlay3d() {
   drawHUD();
 }
 function pick3d(clientX, clientY) {
+  return pick3dRaw(clientX, clientY);
+}
+function pick3dRaw(clientX, clientY) {
   const rect = R3.renderer.domElement.getBoundingClientRect();
   const ndc = new THREE.Vector2((clientX - rect.left) / rect.width * 2 - 1, -(clientY - rect.top) / rect.height * 2 + 1);
   R3.raycaster.setFromCamera(ndc, R3.camera);
   const cands = [];
-  for (const m of R3.ents.values()) if (m.userData.kind === 'enemy' || (m.userData.kind === 'coin' && m.visible)) cands.push(m);
+  for (const m of R3.ents.values()) if (m.userData.kind === 'enemy' || m.userData.kind === 'soldier' || (m.userData.kind === 'coin' && m.visible)) cands.push(m);
   for (const h of R3.housePicks) cands.push(h);
   const hits = R3.raycaster.intersectObjects(cands, true);
   for (const hit of hits) {
     let o = hit.object; while (o && !o.userData.kind) o = o.parent;
+    if (o && o.userData.kind === 'soldier') {
+      // Ist gerade eine Truppe ausgewählt, zählt ein Tipp auf andere Kämpfer als Tipp auf den Boden darunter
+      if (S.sel && o.userData.ref.house !== S.sel) continue;
+      return { x: o.userData.ref.x, y: o.userData.ref.y, soldier: o.userData.ref };
+    }
     if (o) return { x: o.userData.ref.x, y: o.userData.ref.y };
   }
   const p = new THREE.Vector3();
