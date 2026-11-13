@@ -77,6 +77,8 @@ const ENEMY_TYPES = {
   troll:    { name: 'Troll',           from: 4, weight: 3,  hp: 22, speed: 24, dmg: 9,  coins: 10, r: 21, body: '#7d8fa6', dark: '#435468' },
   fledermaus: { name: 'Riesenfledermaus', from: 5, weight: 5, hp: 5, speed: 78, dmg: 3, coins: 5,  r: 11, body: '#6b3fa0', dark: '#3a1f5c', flies: true },
   ritter:   { name: 'Schwarzer Ritter', from: 7, weight: 3,  hp: 35, speed: 32, dmg: 10, coins: 15, r: 17, body: '#2b2d35', dark: '#0f1014' },
+  rammbock: { name: 'Rammbock',        from: 6, weight: 1.5, hp: 45, speed: 20, dmg: 18, coins: 20, r: 22, body: '#8a5a2b', dark: '#3e2814', siege: 'ram' },
+  katapult: { name: 'Katapult',        from: 8, weight: 1.2, hp: 30, speed: 22, dmg: 10, coins: 20, r: 20, body: '#9a6b3a', dark: '#4a3018', siege: 'cat' },
   zyklop:   { name: 'Zyklop',          from: 9, weight: 1.2, hp: 80, speed: 18, dmg: 18, coins: 30, r: 27, body: '#c08457', dark: '#7a4a22' },
 };
 const SQUAD_SIZE = 10;     // Kämpfer pro Haus
@@ -105,7 +107,7 @@ function newGame() {
     coins: 0, wave: 0, hp: 100, maxHp: 100,
     arrowDmg: 1, arrowInterval: 1.6, soldierDmg: 1, soldierHp: 10,
     lv: { wall: 0, arrow: 0, speed: 0, soldier: 0, bridge: 0, fire: 0, tap: 0, magnet: 0, repair: 0 },
-    enemies: [], arrows: [], coinsOnGround: [], soldiers: [], fx: [], texts: [],
+    enemies: [], arrows: [], stones: [], coinsOnGround: [], soldiers: [], fx: [], texts: [],
     queue: [], spawnCd: 0, betweenTimer: 2.5, inWave: false,
     towerCd: [0.5, 0.9, 1.3, 0.2],
     houses: [
@@ -208,7 +210,7 @@ function spawnEnemy(type) {
   const hp = Math.round(T.hp * (1 + 0.3 * (S.wave - 1) + 0.015 * (S.wave - 1) * (S.wave - 1)));
   const dmg = Math.round(T.dmg * (1 + 0.1 * (S.wave - 1)));
   S.enemies.push({ type, x, y, hp, maxHp: hp, speed: T.speed * rnd(0.9, 1.1) * (1 + Math.min(0.3, 0.01 * (S.wave - 1))), dmg, r: T.r,
-    coins: T.coins, flies: !!T.flies, atkCd: 0.5, flash: 0, seed: Math.random() * 10, dir: 0, dead: false });
+    coins: T.coins, flies: !!T.flies, siege: T.siege || null, atkCd: 0.5, flash: 0, seed: Math.random() * 10, dir: 0, dead: false });
 }
 
 // ====== Schaden und Belohnung ======
@@ -364,9 +366,26 @@ function update(dt) {
   for (const e of S.enemies) {
     if (e.dead) continue;
     e.flash = Math.max(0, e.flash - dt);
-    // Kämpfer in der Nähe?
+    e.throwAnim = Math.max(0, (e.throwAnim || 0) - dt);
+    if (e.siege === 'cat') {
+      // Katapult: bleibt in sicherem Abstand stehen und schleudert Steine auf die Mauer
+      const wp = wallPoint(e), dw = dist(e, wp);
+      e.dir = Math.atan2(wp.y - e.y, wp.x - e.x);
+      if (dw > 230) { e.attacking = false; moveTo(e, wp.x, wp.y, inMoat(e) ? e.speed * 0.45 : e.speed, dt); e.dir = Math.atan2(wp.y - e.y, wp.x - e.x); }
+      else {
+        e.attacking = true;
+        e.atkCd -= dt;
+        if (e.atkCd <= 0) {
+          e.atkCd = 3.2; e.throwAnim = 0.5;
+          S.stones.push({ sx: e.x, sy: e.y - 10, tx: wp.x + rnd(-10, 10), ty: wp.y + rnd(-10, 10), x: e.x, y: e.y, h: 0, t: 0, dur: 1.3, dmg: e.dmg });
+        }
+      }
+      continue;
+    }
+    // Kämpfer in der Nähe? (Ein Rammbock lässt sich nicht aufhalten.)
     let foe = null, fd = 1e9;
-    for (const s of S.soldiers) { if (s.dead || s.path.length) continue; const d = dist(e, s); if (d < fd) { fd = d; foe = s; } }
+    if (e.siege !== 'ram')
+      for (const s of S.soldiers) { if (s.dead || s.path.length) continue; const d = dist(e, s); if (d < fd) { fd = d; foe = s; } }
     if (foe && fd < e.r + foe.r + 4) {
       e.dir = Math.atan2(foe.y - e.y, foe.x - e.x);
       e.atkCd -= dt;
@@ -381,14 +400,15 @@ function update(dt) {
       e.dir = Math.atan2(wp.y - e.y, wp.x - e.x);
       e.atkCd -= dt;
       if (e.atkCd <= 0) {
-        e.atkCd = 1;
-        S.hp -= e.dmg; S.shake = 0.15;
+        e.atkCd = e.siege === 'ram' ? 2.2 : 1;
+        if (e.siege === 'ram') { e.throwAnim = 0.5; S.shake = 0.35; addText(wp.x, wp.y - 20, 'RUMMS!', '#ffb36b'); }
+        S.hp -= e.dmg; S.shake = Math.max(S.shake, 0.15);
         puff(wp.x, wp.y, '#b0a090', 4);
       }
     } else {
       e.attacking = false;
-      e.swim = !e.flies && inMoat(e);   // Fledermäuse fliegen einfach drüber
-      const sp = e.swim ? e.speed * 0.45 : e.speed;   // im Wasser schwimmen sie langsamer
+      e.swim = !e.flies && !e.siege && inMoat(e);   // Fledermäuse fliegen einfach drüber
+      const sp = (e.swim || (e.siege && inMoat(e))) ? e.speed * 0.45 : e.speed;   // im Wasser schwimmen sie langsamer
       if (foe && fd < 70) moveTo(e, foe.x, foe.y, sp, dt);
       else moveTo(e, wp.x, wp.y, sp, dt);
     }
@@ -460,6 +480,17 @@ function update(dt) {
 
   S.enemies = S.enemies.filter(e => !e.dead);
   S.soldiers = S.soldiers.filter(s => !s.dead);
+  for (const st of S.stones) {
+    st.t += dt;
+    const k = Math.min(1, st.t / st.dur);
+    st.x = st.sx + (st.tx - st.sx) * k; st.y = st.sy + (st.ty - st.sy) * k;
+    st.h = Math.sin(k * Math.PI) * 120;          // Flugbogen
+    if (k >= 1) {
+      st.done = true; S.hp -= st.dmg; S.shake = 0.3;
+      puff(st.tx, st.ty, '#8d8d8d', 14); addText(st.tx, st.ty - 20, 'BUMM!', '#ffb36b');
+    }
+  }
+  S.stones = S.stones.filter(st => !st.done);
   S.arrows = S.arrows.filter(a => !a.done);
   S.coinsOnGround = S.coinsOnGround.filter(c => !c.done);
   S.fx = S.fx.filter(f => f.t < f.life);
@@ -761,7 +792,85 @@ function blob(x, y, rx, ry, fill, stroke, lw) {
   ctx.fillStyle = fill; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1.5; ctx.stroke(); }
 }
+// ====== Belagerungsgeräte ======
+function drawSiege(e) {
+  const T = ENEMY_TYPES[e.type], u = e.r / 12;
+  const f = Math.cos(e.dir) < 0 ? -1 : 1;
+  const moving = e.lx !== undefined && Math.hypot(e.x - e.lx, e.y - e.ly) > 0.02;
+  e.lx = e.x; e.ly = e.y;
+  const roll = (e.roll = (e.roll || 0) + (moving ? 0.08 : 0));
+  const wood = e.flash > 0 ? '#ffffff' : T.body, dark = T.dark;
+  ctx.save(); ctx.translate(e.x, e.y);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(0, 9 * u, 17 * u, 4 * u, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.scale(f, 1);
+  const wheel = (x, y, rr) => {
+    ctx.fillStyle = '#5a3a1a'; ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#2a1a0a'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = '#8a6a3a'; ctx.lineWidth = 1.2;
+    for (let i = 0; i < 4; i++) { const a = roll + i * Math.PI / 4; ctx.beginPath(); ctx.moveTo(x - Math.cos(a) * rr, y - Math.sin(a) * rr); ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); ctx.stroke(); }
+    ctx.fillStyle = '#9aa0a8'; ctx.beginPath(); ctx.arc(x, y, rr * 0.25, 0, Math.PI * 2); ctx.fill();
+  };
+  // kleine Goblins, die schieben bzw. bedienen
+  const goblin = (x, y) => {
+    blob(x, y + 1.5 * u, 2.6 * u, 3 * u, '#63b33c', '#2f6a1a', 1);
+    blob(x, y - 3 * u, 2.4 * u, 2.3 * u, '#63b33c', '#2f6a1a', 1);
+    ctx.fillStyle = '#63b33c'; ctx.beginPath(); ctx.moveTo(x - 1.5 * u, y - 3.5 * u); ctx.lineTo(x - 5 * u, y - 5.5 * u); ctx.lineTo(x - 1 * u, y - 2 * u); ctx.closePath(); ctx.fill();
+    blob(x + 1 * u, y - 3.3 * u, 0.7 * u, 0.7 * u, '#ffe14d');
+  };
+  if (e.siege === 'ram') {
+    // Rammbock: Wagen mit Dach, ein dicker Baumstamm mit Eisenkopf schwingt nach vorne
+    const swing = e.throwAnim > 0 ? Math.sin((0.5 - e.throwAnim) / 0.5 * Math.PI) * 6 * u : Math.sin(S.time * 2 + e.seed) * 0.6 * u;
+    goblin(-15 * u, 1 * u); goblin(-12 * u, 4 * u);
+    ctx.fillStyle = dark; ctx.fillRect(-12 * u, 2 * u, 24 * u, 3 * u);                 // Fahrgestell
+    // Stamm
+    ctx.fillStyle = '#7a4f24'; ctx.strokeStyle = '#3e2814'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-13 * u + swing, -4 * u, 26 * u, 5 * u, 2.5 * u) : ctx.rect(-13 * u + swing, -4 * u, 26 * u, 5 * u); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#5a3a1a'; ctx.lineWidth = 1;
+    for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(i * 4 * u + swing, -3.5 * u); ctx.lineTo(i * 4 * u + 2 * u + swing, 0.5 * u); ctx.stroke(); }
+    // Eisenkopf (Widderkopf)
+    ctx.fillStyle = '#6b717a'; ctx.strokeStyle = '#33363d'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(14 * u + swing, -1.5 * u, 4 * u, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#9aa0a8'; ctx.lineWidth = 2 * u;
+    ctx.beginPath(); ctx.arc(13 * u + swing, -4 * u, 2.8 * u, Math.PI * 0.9, Math.PI * 2.1); ctx.stroke();   // Widderhorn
+    ctx.fillStyle = '#ff3b3b'; ctx.beginPath(); ctx.arc(16 * u + swing, -2.5 * u, 0.8 * u, 0, Math.PI * 2); ctx.fill();
+    // Dach (Holzschutz) mit Fell
+    ctx.fillStyle = wood; ctx.strokeStyle = dark; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-12 * u, -3 * u); ctx.lineTo(-8 * u, -13 * u); ctx.lineTo(8 * u, -13 * u); ctx.lineTo(12 * u, -3 * u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = dark; ctx.lineWidth = 1;
+    for (let i = -6; i <= 6; i += 3) { ctx.beginPath(); ctx.moveTo(i * u, -13 * u); ctx.lineTo(i * 1.4 * u, -3 * u); ctx.stroke(); }
+    ctx.fillStyle = '#c9b48a'; ctx.fillRect(-9 * u, -14.5 * u, 18 * u, 2.5 * u);       // Fell oben drauf
+    // Räder
+    wheel(-8 * u, 6 * u, 3.6 * u); wheel(8 * u, 6 * u, 3.6 * u);
+  } else {
+    // Katapult: Holzgestell auf Rädern, Wurfarm mit Stein
+    const k = e.throwAnim > 0 ? (0.5 - e.throwAnim) / 0.5 : 1;
+    const armA = e.throwAnim > 0 ? -2.6 + k * 2.2 : (e.atkCd < 1.5 ? -0.4 - (1.5 - e.atkCd) / 1.5 * 2.2 : -0.4);
+    goblin(-14 * u, 2 * u);
+    ctx.fillStyle = wood; ctx.strokeStyle = dark; ctx.lineWidth = 2;
+    ctx.fillRect(-12 * u, 0, 24 * u, 4 * u); ctx.strokeRect(-12 * u, 0, 24 * u, 4 * u);  // Grundbalken
+    // Dreiecks-Gestell
+    ctx.beginPath(); ctx.moveTo(-6 * u, 0); ctx.lineTo(0, -10 * u); ctx.lineTo(6 * u, 0); ctx.lineWidth = 2.5 * u; ctx.strokeStyle = wood; ctx.stroke();
+    ctx.lineWidth = 1; ctx.strokeStyle = dark; ctx.stroke();
+    // Seilwinde
+    blob(-8 * u, -1 * u, 2.2 * u, 2.2 * u, '#7a4f24', dark, 1.2);
+    ctx.strokeStyle = '#d8c79a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-8 * u, -1 * u); ctx.lineTo(Math.cos(armA + Math.PI) * 6 * u, -10 * u + Math.sin(armA + Math.PI) * 6 * u); ctx.stroke();
+    // Wurfarm
+    const ax = Math.cos(armA), ay = Math.sin(armA);
+    ctx.strokeStyle = '#6b4520'; ctx.lineWidth = 2.2 * u; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-ax * 5 * u, -10 * u - ay * 5 * u); ctx.lineTo(ax * 15 * u, -10 * u + ay * 15 * u); ctx.stroke();
+    // Schale mit Stein
+    const bx = ax * 15 * u, by = -10 * u + ay * 15 * u;
+    blob(bx, by, 3 * u, 2 * u, '#5a3a1a', dark, 1);
+    if (!(e.throwAnim > 0 && k > 0.6)) blob(bx, by - 1.5 * u, 2.4 * u, 2.4 * u, '#8d8d8d', '#555', 1);
+    blob(0, -10 * u, 1.2 * u, 1.2 * u, '#9aa0a8');
+    wheel(-8 * u, 6 * u, 3.2 * u); wheel(8 * u, 6 * u, 3.2 * u);
+  }
+  ctx.restore();
+  if (e.hp < e.maxHp) hpBar(e.x, e.y - 20 * u, Math.max(28, e.r * 2), e.hp / e.maxHp, '#e84a3c');
+}
 function drawEnemy(e) {
+  if (e.siege) return drawSiege(e);
   const T = ENEMY_TYPES[e.type], k = e.type, r = e.r, u = r / 12;
   const moving = e.lx !== undefined && Math.hypot(e.x - e.lx, e.y - e.ly) > 0.02;
   e.lx = e.x; e.ly = e.y;
@@ -1210,6 +1319,12 @@ function draw() {
       ctx.globalAlpha = k; ctx.fillStyle = f.color;
       ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
     }
+  }
+  // Katapult-Steine
+  for (const st of S.stones) {
+    ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(st.x, st.y, 7, 3, 0, 0, Math.PI * 2); ctx.fill();
+    blob(st.x, st.y - st.h, 7, 7, '#8d8d8d', '#555', 1.5);
+    ctx.fillStyle = '#a8a8a8'; ctx.beginPath(); ctx.arc(st.x - 2, st.y - st.h - 2, 2.5, 0, Math.PI * 2); ctx.fill();
   }
   for (const c of S.coinsOnGround) if (c.fly) drawCoin(c.x, c.y, 9);
   for (const t of S.texts) {
