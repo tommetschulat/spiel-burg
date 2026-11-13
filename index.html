@@ -232,12 +232,12 @@ function buy(id) {
   if (S.coins < cost) return;
   if (id === 'repair' && S.hp >= S.maxHp) return;
   S.coins -= cost; S.lv[id]++;
-  if (id === 'wall') { S.maxHp += 25; S.hp += 25; addText(500, 200, 'Mauern stärker!', '#ffe27a'); }
-  if (id === 'arrow') { S.arrowDmg += 1; addText(500, 200, 'Pfeile stärker!', '#ffe27a'); }
+  if (id === 'wall') { S.maxHp += 25; S.hp += 25; for (const [x, y] of TOWERS) puff(x, y, '#d8d8d8', 8); addText(500, 200, 'Mauern stärker!', '#ffe27a'); }
+  if (id === 'arrow') { S.arrowDmg += 1; for (const [x, y] of TOWERS) puff(x, y - towerH(), '#ffe27a', 8); addText(500, 200, 'Pfeile stärker!', '#ffe27a'); }
   if (id === 'speed') { S.arrowInterval *= 0.8; addText(500, 200, 'Pfeile schneller!', '#ffe27a'); }
   if (id === 'soldier') {
     S.soldierDmg += 1; S.soldierHp += 5;
-    for (const s of S.soldiers) { s.maxHp = S.soldierHp; s.hp += 5; }
+    for (const s of S.soldiers) { s.maxHp = S.soldierHp; s.hp += 5; s.r = 12 * knightScale(); puff(s.x, s.y, '#ffe27a', 6); }
     addText(500, 200, 'Kämpfer stärker!', '#ffe27a');
   }
   if (id === 'repair') { S.hp = Math.min(S.maxHp, S.hp + 30); puff(500, 350, '#d8d8d8', 16); addText(500, 200, 'Repariert!', '#9cff8a'); }
@@ -283,7 +283,7 @@ function update(dt) {
       if (h.spawnCd <= 0) {
         h.toSpawn--; h.spawnCd = 0.25;
         const idx = SQUAD_SIZE - 1 - h.toSpawn;
-        S.soldiers.push({ house: h, x: h.x, y: h.y + 18, r: 12, hp: S.soldierHp, maxHp: S.soldierHp,
+        S.soldiers.push({ house: h, x: h.x, y: h.y + 18, r: 12 * knightScale(), hp: S.soldierHp, maxHp: S.soldierHp,
           path: [{ x: h.x, y: 445 }, { x: GATE.x + rnd(-10, 10), y: GATE.y + 2 }, { x: GATE.x + rnd(-8, 8), y: GATE.y + 40 }, { x: GATE.x + rnd(-14, 14), y: GATE.y + MOAT.outer + 18 }],
           atkCd: 0, swing: 0, dir: Math.PI / 2, idx, dead: false });
       }
@@ -344,7 +344,7 @@ function update(dt) {
     }
     const wp = wallPoint(e);
     const dw = dist(e, wp);
-    if (dw <= e.r + 6) {
+    if (dw <= e.r + 6 + (wallThick() - 16) / 2) {
       e.attacking = true;
       e.dir = Math.atan2(wp.y - e.y, wp.x - e.x);
       e.atkCd -= dt;
@@ -385,7 +385,7 @@ function update(dt) {
     let target = null, bd = 300;
     for (const e of S.enemies) { if (e.dead) continue; const d = dist(t, e); if (d < bd) { bd = d; target = e; } }
     if (target) {
-      S.arrows.push({ x: t.x, y: t.y - 10, target, dir: 0 });
+      S.arrows.push({ x: t.x, y: t.y - towerH() - 4, target, dir: 0 });
       S.towerCd[i] = S.arrowInterval;
     }
   }
@@ -511,8 +511,8 @@ function drawMoat() {
   }
 }
 function drawBridge() {
-  const len = BRIDGE_LEN * (0.12 + 0.88 * S.bridge);   // hochgezogen sieht man sie verkürzt
-  const x0 = GATE.x - 22, y0 = GATE.y + 11, w = 44;
+  const len = (BRIDGE_LEN - (wallThick() - 16) / 2) * (0.12 + 0.88 * S.bridge);   // hochgezogen sieht man sie verkürzt
+  const x0 = GATE.x - 22, y0 = GATE.y + wallThick() / 2 + 3, w = 44;
   // Schatten aufs Wasser
   ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(x0 + 4, y0 + 4, w, len);
   // Bretter
@@ -540,38 +540,90 @@ function drawCastle() {
   ctx.fillRect(GATE.x - 18, 360, 36, WALL.b - 360);
 
   // Mauern
+  // Mauern: jede Stufe "Dickere Mauern" macht sie dicker
+  const wt = wallThick(), hw = wt / 2;
   ctx.lineJoin = 'miter';
-  ctx.strokeStyle = '#6f6f6f'; ctx.lineWidth = 22;
+  ctx.strokeStyle = '#6f6f6f'; ctx.lineWidth = wt + 6;
   ctx.strokeRect(WALL.l, WALL.t, WALL.r - WALL.l, WALL.b - WALL.t);
-  ctx.strokeStyle = '#9d9d9d'; ctx.lineWidth = 16;
+  ctx.strokeStyle = S.lv.wall >= 4 ? '#a7acb4' : '#9d9d9d'; ctx.lineWidth = wt;
   ctx.strokeRect(WALL.l, WALL.t, WALL.r - WALL.l, WALL.b - WALL.t);
-  // Zinnen
+  // Steinfugen ab Stufe 1
+  if (S.lv.wall >= 1) {
+    ctx.strokeStyle = 'rgba(70,70,70,.45)'; ctx.lineWidth = 1.2;
+    const rows = Math.floor(wt / 8);
+    for (let row = 1; row < rows; row++) {
+      const o = -hw + row * (wt / rows);
+      ctx.beginPath();
+      ctx.moveTo(WALL.l + o, WALL.t + o); ctx.lineTo(WALL.r - o, WALL.t + o); ctx.lineTo(WALL.r - o, WALL.b - o);
+      ctx.lineTo(WALL.l + o, WALL.b - o); ctx.closePath(); ctx.stroke();
+    }
+    ctx.beginPath();
+    for (let x = WALL.l + 8; x < WALL.r - 4; x += 14) {
+      ctx.moveTo(x, WALL.t - hw); ctx.lineTo(x, WALL.t + hw); ctx.moveTo(x + 7, WALL.b - hw); ctx.lineTo(x + 7, WALL.b + hw);
+    }
+    for (let y = WALL.t + 8; y < WALL.b - 4; y += 14) {
+      ctx.moveTo(WALL.l - hw, y); ctx.lineTo(WALL.l + hw, y); ctx.moveTo(WALL.r - hw, y + 7); ctx.lineTo(WALL.r + hw, y + 7);
+    }
+    ctx.stroke();
+  }
+  // Zinnen (werden mit der Mauer größer)
   ctx.fillStyle = '#b8b8b8';
-  for (let x = WALL.l + 30; x < WALL.r - 20; x += 22) { ctx.fillRect(x, WALL.t - 11, 10, 6); ctx.fillRect(x, WALL.b + 5, 10, 6); }
-  for (let y = WALL.t + 30; y < WALL.b - 20; y += 22) { ctx.fillRect(WALL.l - 11, y, 6, 10); ctx.fillRect(WALL.r + 5, y, 6, 10); }
+  const zl = 10 + Math.min(S.lv.wall, 6), zd = 6 + Math.min(S.lv.wall, 6);
+  for (let x = WALL.l + 30; x < WALL.r - 20; x += 22) { ctx.fillRect(x, WALL.t - hw - 3, zl, zd); ctx.fillRect(x, WALL.b + hw + 3 - zd, zl, zd); }
+  for (let y = WALL.t + 30; y < WALL.b - 20; y += 22) { ctx.fillRect(WALL.l - hw - 3, y, zd, zl); ctx.fillRect(WALL.r + hw + 3 - zd, y, zd, zl); }
 
   // Tor
   ctx.fillStyle = '#7a4a22';
-  ctx.fillRect(GATE.x - GATE.w / 2, GATE.y - 12, GATE.w, 24);
+  const gh = hw + 4;
+  ctx.fillRect(GATE.x - GATE.w / 2, GATE.y - gh, GATE.w, gh * 2);
   ctx.strokeStyle = '#4e2e12'; ctx.lineWidth = 2;
-  for (let i = 1; i < 5; i++) { const x = GATE.x - GATE.w / 2 + i * GATE.w / 5; ctx.beginPath(); ctx.moveTo(x, GATE.y - 12); ctx.lineTo(x, GATE.y + 12); ctx.stroke(); }
-  ctx.strokeRect(GATE.x - GATE.w / 2, GATE.y - 12, GATE.w, 24);
+  for (let i = 1; i < 5; i++) { const x = GATE.x - GATE.w / 2 + i * GATE.w / 5; ctx.beginPath(); ctx.moveTo(x, GATE.y - gh); ctx.lineTo(x, GATE.y + gh); ctx.stroke(); }
+  ctx.strokeRect(GATE.x - GATE.w / 2, GATE.y - gh, GATE.w, gh * 2);
   drawBridge();
 
   // Türme
-  TOWERS.forEach(([x, y], i) => {
-    ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.beginPath(); ctx.arc(x + 4, y + 5, 30, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#8f8f8f'; ctx.beginPath(); ctx.arc(x, y, 30, 0, Math.PI * 2); ctx.fill();
+  // Türme: "Bessere Pfeile" macht sie höher, "Schnellere Pfeile" bringt mehr Bogenschützen
+  const th = towerH();
+  TOWERS.forEach(([x, y0], i) => {
+    const R = 30 + th * 0.25;
+    const y = y0 - th;   // Turmspitze
+    ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(x + 5 + th * 0.4, y0 + 6, R, R * 0.9, 0, 0, Math.PI * 2); ctx.fill();
+    if (th > 0) {
+      // Turmwand
+      ctx.fillStyle = '#6e6e6e';
+      ctx.fillRect(x - R, y, R * 2, th);
+      ctx.beginPath(); ctx.arc(x, y0, R, 0, Math.PI); ctx.fill();
+      ctx.strokeStyle = 'rgba(40,40,40,.4)'; ctx.lineWidth = 1.2;
+      for (let yy = y + 6; yy < y0 + R * 0.8; yy += 6) {
+        const half = yy <= y0 ? R : Math.sqrt(Math.max(0, R * R - (yy - y0) * (yy - y0)));
+        ctx.beginPath(); ctx.moveTo(x - half, yy); ctx.lineTo(x + half, yy); ctx.stroke();
+      }
+      // Schießscharten
+      ctx.fillStyle = '#2b2b2b';
+      const slits = Math.min(3, Math.ceil(th / 12));
+      for (let k = 0; k < slits; k++) ctx.fillRect(x - 2 + (k - (slits - 1) / 2) * 14, y0 + 6, 4, 10);
+    }
+    ctx.fillStyle = '#8f8f8f'; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#5c5c5c'; ctx.lineWidth = 3; ctx.stroke();
     ctx.fillStyle = '#b5b5b5';
-    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; ctx.beginPath(); ctx.arc(x + Math.cos(a) * 24, y + Math.sin(a) * 24, 5, 0, Math.PI * 2); ctx.fill(); }
-    ctx.fillStyle = '#7a7a7a'; ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.fill();
-    // Fahne
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; ctx.beginPath(); ctx.arc(x + Math.cos(a) * (R - 6), y + Math.sin(a) * (R - 6), 5, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#7a7a7a'; ctx.beginPath(); ctx.arc(x, y, R * 0.55, 0, Math.PI * 2); ctx.fill();
+    // Bogenschützen auf dem Turm
+    const archers = 1 + Math.min(S.lv.speed, 3);
+    for (let k = 0; k < archers; k++) {
+      const a = Math.PI * 0.25 + k * Math.PI * 2 / archers + i;
+      const ax = x + Math.cos(a) * (archers > 1 ? 9 : 0), ay = y + Math.sin(a) * (archers > 1 ? 9 : 0) + 4;
+      ctx.fillStyle = '#2e7d32'; ctx.beginPath(); ctx.arc(ax, ay, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#f1c27d'; ctx.beginPath(); ctx.arc(ax, ay - 3, 2.6, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#6b4520'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(ax + 3, ay, 5, -1.2, 1.2); ctx.stroke();
+    }
+    // Fahne (golden ab Stufe 4 "Bessere Pfeile")
+    const fx = x - R * 0.6;
     ctx.strokeStyle = '#4a3420'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 34); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fx, y); ctx.lineTo(fx, y - 34); ctx.stroke();
     const wave = Math.sin(S.time * 5 + i) * 3;
-    ctx.fillStyle = '#d63b2f';
-    ctx.beginPath(); ctx.moveTo(x, y - 34); ctx.lineTo(x + 20, y - 29 + wave); ctx.lineTo(x, y - 22); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = S.lv.arrow >= 4 ? '#ffcf3f' : '#d63b2f';
+    ctx.beginPath(); ctx.moveTo(fx, y - 34); ctx.lineTo(fx + 20, y - 29 + wave); ctx.lineTo(fx, y - 22); ctx.closePath(); ctx.fill();
   });
 
   // Häuser
@@ -652,6 +704,10 @@ function drawEnemy(e) {
   ctx.restore();
   if (e.hp < e.maxHp) hpBar(e.x, e.y - e.r - 12, e.r * 2, e.hp / e.maxHp, '#e84a3c');
 }
+// Wie die Upgrades aussehen (Stufen werden gedeckelt, damit nichts riesig wird)
+function wallThick() { return 16 + Math.min(S.lv.wall, 6) * 4; }
+function towerH() { return Math.min(S.lv.arrow, 6) * 6; }
+function knightScale() { return 1 + Math.min(S.lv.soldier, 6) * 0.1; }
 const SQUAD_DARK = ['#1f4f99', '#5e2b80'];
 function drawSoldier(s) {
   const col = SQUAD_COLORS[s.house.id], dark = SQUAD_DARK[s.house.id];
@@ -662,6 +718,8 @@ function drawSoldier(s) {
   const flip = Math.cos(s.dir) < 0 ? -1 : 1;
   ctx.save(); ctx.translate(s.x, s.y);
   // Schatten
+  const ks = knightScale();
+  ctx.scale(ks, ks);
   ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(1, 10, 10, 3.5, 0, 0, Math.PI * 2); ctx.fill();
   ctx.translate(0, bob);
 
@@ -693,7 +751,8 @@ function drawSoldier(s) {
   ctx.beginPath(); ctx.moveTo(cx * 11, cy * 11); ctx.lineTo(cx * 23, cy * 23); ctx.stroke();
 
   // Rüstung
-  ctx.fillStyle = '#cfd6de'; ctx.beginPath(); ctx.arc(0, 2, 9, 0, Math.PI * 2); ctx.fill();
+  const goldArmor = S.lv.soldier >= 4;   // ab Stufe 4 goldene Rüstung
+  ctx.fillStyle = goldArmor ? '#f2c94c' : '#cfd6de'; ctx.beginPath(); ctx.arc(0, 2, 9, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = '#5f6b78'; ctx.lineWidth = 1.8; ctx.stroke();
   // Wappenrock in Teamfarbe mit Goldgürtel
   ctx.fillStyle = col; ctx.fillRect(-4, -2, 8, 11);
@@ -717,7 +776,7 @@ function drawSoldier(s) {
   ctx.beginPath(); ctx.moveTo(0, -13); ctx.quadraticCurveTo(-6, -21 - sway * 0.5, -12 - sway, -12); ctx.stroke();
   ctx.strokeStyle = '#ffcf3f'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(0, -13); ctx.quadraticCurveTo(-6, -20 - sway * 0.5, -11 - sway, -12); ctx.stroke();
-  ctx.fillStyle = '#e4e9ef'; ctx.beginPath(); ctx.arc(0, -6, 7.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = goldArmor ? '#ffd966' : '#e4e9ef'; ctx.beginPath(); ctx.arc(0, -6, 7.5, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = '#5f6b78'; ctx.lineWidth = 1.8; ctx.stroke();
   ctx.fillStyle = '#1d232b'; ctx.fillRect(-4, -7.5, 9, 3);              // Visierschlitz
   ctx.fillStyle = '#9fe8ff'; ctx.fillRect(0, -7, 2, 2); ctx.fillRect(3, -7, 2, 2); // leuchtende Augen
@@ -727,7 +786,7 @@ function drawSoldier(s) {
   ctx.restore();
 
   ctx.restore();
-  if (s.hp < s.maxHp) hpBar(s.x, s.y - 24, 20, s.hp / s.maxHp, '#4ad66d');
+  if (s.hp < s.maxHp) hpBar(s.x, s.y - 24 * knightScale(), 20, s.hp / s.maxHp, '#4ad66d');
 }
 function hpBar(x, y, w, f, col) {
   ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(x - w / 2 - 1, y - 1, w + 2, 6);
@@ -786,9 +845,32 @@ function draw() {
   for (const s of S.soldiers) drawSoldier(s);
   for (const e of S.enemies) drawEnemy(e);
   // Pfeile
-  ctx.strokeStyle = '#4a3018'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  // Pfeile: werden mit "Bessere Pfeile" dicker, länger und ab Stufe 4 golden;
+  // mit "Schnellere Pfeile" ziehen sie einen Schweif hinter sich her
+  const al = Math.min(S.lv.arrow, 6), sl = Math.min(S.lv.speed, 6);
+  const alen = 14 + al * 2.5, aw = 2.5 + al * 0.6;
+  const shaft = al >= 4 ? '#e0a810' : '#4a3018', tip = al >= 4 ? '#fff3b0' : al >= 2 ? '#9aa6b2' : '#6b6b6b';
+  ctx.lineCap = 'round';
   for (const a of S.arrows) {
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x - Math.cos(a.dir) * 14, a.y - Math.sin(a.dir) * 14); ctx.stroke();
+    const cx = Math.cos(a.dir), cy = Math.sin(a.dir);
+    if (sl > 0) {
+      ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = aw + 1;
+      ctx.beginPath(); ctx.moveTo(a.x - cx * alen, a.y - cy * alen); ctx.lineTo(a.x - cx * (alen + sl * 7), a.y - cy * (alen + sl * 7)); ctx.stroke();
+    }
+    if (al >= 4) {
+      ctx.strokeStyle = 'rgba(255,220,90,.35)'; ctx.lineWidth = aw + 5;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x - cx * alen, a.y - cy * alen); ctx.stroke();
+    }
+    ctx.strokeStyle = shaft; ctx.lineWidth = aw;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x - cx * alen, a.y - cy * alen); ctx.stroke();
+    // Spitze
+    const ts = 3 + aw;
+    ctx.fillStyle = tip; ctx.beginPath();
+    ctx.moveTo(a.x + cx * ts, a.y + cy * ts); ctx.lineTo(a.x - cy * ts * 0.6, a.y + cx * ts * 0.6); ctx.lineTo(a.x + cy * ts * 0.6, a.y - cx * ts * 0.6); ctx.closePath(); ctx.fill();
+    // Federn
+    ctx.strokeStyle = al >= 4 ? '#ffffff' : '#d63b2f'; ctx.lineWidth = 1.5;
+    const ex = a.x - cx * alen, ey = a.y - cy * alen;
+    ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - cx * 4 - cy * 3, ey - cy * 4 + cx * 3); ctx.moveTo(ex, ey); ctx.lineTo(ex - cx * 4 + cy * 3, ey - cy * 4 - cx * 3); ctx.stroke();
   }
   // Effekte
   for (const f of S.fx) {
