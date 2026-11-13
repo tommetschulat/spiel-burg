@@ -177,7 +177,7 @@ function startWave() {
   S.wave++;
   const n = S.wave;
   const q = [];
-  const count = 4 + n * 3;
+  const count = 5 + n * 4;
   // alle Gegnerarten, die ab dieser Welle dabei sind; Goblins werden später seltener
   const pool = Object.entries(ENEMY_TYPES).filter(([, T]) => n >= T.from)
     .map(([type, T]) => [type, type === 'goblin' ? Math.max(2, T.weight - n) : T.weight]);
@@ -204,8 +204,10 @@ function spawnEnemy(type) {
   else if (side === 1) { x = W + 25; y = rnd(0, H); }
   else if (side === 2) { x = rnd(0, W); y = H + 25; }
   else { x = -25; y = rnd(0, H); }
-  const hp = Math.round(T.hp * (1 + 0.1 * (S.wave - 1)));
-  S.enemies.push({ type, x, y, hp, maxHp: hp, speed: T.speed * rnd(0.9, 1.1), dmg: T.dmg, r: T.r,
+  // Gegner werden mit jeder Welle zäher und schlagen härter zu
+  const hp = Math.round(T.hp * (1 + 0.3 * (S.wave - 1) + 0.015 * (S.wave - 1) * (S.wave - 1)));
+  const dmg = Math.round(T.dmg * (1 + 0.1 * (S.wave - 1)));
+  S.enemies.push({ type, x, y, hp, maxHp: hp, speed: T.speed * rnd(0.9, 1.1) * (1 + Math.min(0.3, 0.01 * (S.wave - 1))), dmg, r: T.r,
     coins: T.coins, flies: !!T.flies, atkCd: 0.5, flash: 0, seed: Math.random() * 10, dir: 0, dead: false });
 }
 
@@ -247,6 +249,17 @@ function buy(id) {
   if (S.coins < cost) return;
   if (id === 'repair' && S.hp >= S.maxHp) return;
   S.coins -= cost; S.lv[id]++;
+  const lvNow = S.lv[id];
+  if (id !== 'repair' && (lvNow === 4 || lvNow === 10 || lvNow === 15)) {
+    // Extra-Kraft beim Aufstieg in eine neue Look-Stufe
+    const t = tier(lvNow), bonus = t === 1 ? 1 : t === 2 ? 3 : 6;
+    if (id === 'wall') { S.maxHp += 50 * bonus; S.hp += 50 * bonus; }
+    if (id === 'arrow') S.arrowDmg += bonus;
+    if (id === 'speed') S.arrowInterval *= 0.85;
+    if (id === 'soldier') { S.soldierDmg += bonus; S.soldierHp += 10 * bonus; }
+    S.banner = { text: '⭐ ' + TIER_NAMES[t] + '-Stufe: ' + UPGRADES.find(x => x.id === id).nm + '! ⭐', t: 3 };
+    puff(500, 350, t === 2 ? '#9fe8ff' : t === 3 ? '#d38cff' : '#ffe27a', 40);
+  }
   if (id === 'wall') { S.maxHp += 25; S.hp += 25; for (const [x, y] of TOWERS) puff(x, y, '#d8d8d8', 8); addText(500, 200, 'Mauern stärker!', '#ffe27a'); }
   if (id === 'arrow') { S.arrowDmg += 1; for (const [x, y] of TOWERS) puff(x, y - towerH(), '#ffe27a', 8); addText(500, 200, 'Pfeile stärker!', '#ffe27a'); }
   if (id === 'speed') { S.arrowInterval *= 0.8; addText(500, 200, 'Pfeile schneller!', '#ffe27a'); }
@@ -558,7 +571,7 @@ function drawBridge() {
   ctx.strokeRect(x0, y0, w, len);
   // Stufe 1+: Eisenbeschläge an den Seiten
   if (bl >= 1) {
-    const iron = bl >= 4 ? '#e0a810' : '#4b4f57';
+    const iron = S.lv.bridge >= 10 ? '#5fd0ff' : bl >= 4 ? '#e0a810' : '#4b4f57';
     ctx.fillStyle = iron;
     ctx.fillRect(x0, y0, 5, len); ctx.fillRect(x0 + w - 5, y0, 5, len);
     for (let y = y0 + 10; y < y0 + len - 4; y += 14) ctx.fillRect(x0, y, w, 3);
@@ -567,14 +580,14 @@ function drawBridge() {
     for (let y = y0 + 6; y < y0 + len - 2; y += 14) for (const xx of [x0 + 2.5, x0 + w - 2.5]) { ctx.beginPath(); ctx.arc(xx, y, 1.6, 0, Math.PI * 2); ctx.fill(); }
   }
   // Ketten von der Mauer zum Brückenende (ab Stufe 3 dicker, ab Stufe 4 golden)
-  ctx.strokeStyle = bl >= 4 ? '#ffcf3f' : '#3a3a3a'; ctx.lineWidth = bl >= 3 ? 3.5 : 2; ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = S.lv.bridge >= 10 ? '#9fe8ff' : bl >= 4 ? '#ffcf3f' : '#3a3a3a'; ctx.lineWidth = bl >= 3 ? 3.5 : 2; ctx.setLineDash([4, 3]);
   for (const sx of [-1, 1]) {
     ctx.beginPath(); ctx.moveTo(GATE.x + sx * (30 + bl * 2), GATE.y - 4); ctx.lineTo(GATE.x + sx * (w / 2 - 1), y0 + len - 2); ctx.stroke();
   }
   ctx.setLineDash([]);
   // Stufe 2+: Stacheln links und rechts vom Tor
   if (bl >= 2) {
-    ctx.fillStyle = bl >= 4 ? '#ffd966' : '#c9ced6'; ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
+    ctx.fillStyle = S.lv.bridge >= 10 ? '#c8f4ff' : bl >= 4 ? '#ffd966' : '#c9ced6'; ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
     const sy = y0 - 1, n = 2 + bl;
     for (const sd of [-1, 1]) for (let k = 0; k < n; k++) {
       const sx = GATE.x + sd * (w / 2 + 6 + k * 9);
@@ -599,8 +612,11 @@ function drawCastle() {
   ctx.lineJoin = 'miter';
   ctx.strokeStyle = '#6f6f6f'; ctx.lineWidth = wt + 6;
   ctx.strokeRect(WALL.l, WALL.t, WALL.r - WALL.l, WALL.b - WALL.t);
-  ctx.strokeStyle = S.lv.wall >= 4 ? '#a7acb4' : '#9d9d9d'; ctx.lineWidth = wt;
+  const wT = tier(S.lv.wall);
+  if (wT >= 3) { ctx.shadowColor = '#c77dff'; ctx.shadowBlur = 10 + pulse(3) * 12; }
+  ctx.strokeStyle = ['#9d9d9d', '#a7acb4', '#8fc3dc', '#7b6aa8'][wT]; ctx.lineWidth = wt;
   ctx.strokeRect(WALL.l, WALL.t, WALL.r - WALL.l, WALL.b - WALL.t);
+  ctx.shadowBlur = 0;
   // Steinfugen ab Stufe 1
   if (S.lv.wall >= 1) {
     ctx.strokeStyle = 'rgba(70,70,70,.45)'; ctx.lineWidth = 1.2;
@@ -621,11 +637,22 @@ function drawCastle() {
     ctx.stroke();
   }
   // Zinnen (werden mit der Mauer größer)
-  ctx.fillStyle = '#b8b8b8';
+  ctx.fillStyle = ['#b8b8b8', '#c9ccd2', '#c8f4ff', '#e3c8ff'][wT];
   const zl = 10 + Math.min(S.lv.wall, 6), zd = 6 + Math.min(S.lv.wall, 6);
   for (let x = WALL.l + 30; x < WALL.r - 20; x += 22) { ctx.fillRect(x, WALL.t - hw - 3, zl, zd); ctx.fillRect(x, WALL.b + hw + 3 - zd, zl, zd); }
   for (let y = WALL.t + 30; y < WALL.b - 20; y += 22) { ctx.fillRect(WALL.l - hw - 3, y, zd, zl); ctx.fillRect(WALL.r + hw + 3 - zd, y, zd, zl); }
 
+  if (wT >= 2) {
+    // funkelnde Kristalle (Diamant) bzw. leuchtende Runen (Magie) auf der Mauer
+    const pts = [];
+    for (let x = WALL.l + 40; x < WALL.r - 30; x += 44) pts.push([x, WALL.t], [x + 22, WALL.b]);
+    for (let y = WALL.t + 40; y < WALL.b - 30; y += 44) pts.push([WALL.l, y], [WALL.r, y + 22]);
+    pts.forEach(([x, y], k) => {
+      const tw = 0.5 + 0.5 * Math.sin(S.time * 3 + k);
+      ctx.fillStyle = wT >= 3 ? 'rgba(211,140,255,' + (0.5 + tw * 0.5) + ')' : 'rgba(159,232,255,' + (0.5 + tw * 0.5) + ')';
+      ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 4, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 4, y); ctx.closePath(); ctx.fill();
+    });
+  }
   // Tor
   ctx.fillStyle = '#7a4a22';
   const gh = hw + 4;
@@ -657,17 +684,26 @@ function drawCastle() {
       const slits = Math.min(3, Math.ceil(th / 12));
       for (let k = 0; k < slits; k++) ctx.fillRect(x - 2 + (k - (slits - 1) / 2) * 14, y0 + 6, 4, 10);
     }
-    ctx.fillStyle = '#8f8f8f'; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+    const aT = tier(S.lv.arrow);
+    if (aT >= 2) { ctx.shadowColor = aT >= 3 ? '#c77dff' : '#7fdcff'; ctx.shadowBlur = 8 + pulse(3) * 10; }
+    ctx.fillStyle = ['#8f8f8f', '#8f8f8f', '#7fa9bf', '#6f5f9a'][aT]; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
     ctx.strokeStyle = '#5c5c5c'; ctx.lineWidth = 3; ctx.stroke();
-    ctx.fillStyle = '#b5b5b5';
+    ctx.fillStyle = ['#b5b5b5', '#d8c27a', '#c8f4ff', '#e3c8ff'][aT];
     for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; ctx.beginPath(); ctx.arc(x + Math.cos(a) * (R - 6), y + Math.sin(a) * (R - 6), 5, 0, Math.PI * 2); ctx.fill(); }
     ctx.fillStyle = '#7a7a7a'; ctx.beginPath(); ctx.arc(x, y, R * 0.55, 0, Math.PI * 2); ctx.fill();
+    if (aT >= 3) {
+      // schwebende Magiekugel über dem Turm
+      const oy = y - 10 - pulse(2) * 4;
+      ctx.fillStyle = 'rgba(199,125,255,.35)'; ctx.beginPath(); ctx.arc(x, oy, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#e9d2ff'; ctx.beginPath(); ctx.arc(x, oy, 5, 0, Math.PI * 2); ctx.fill();
+    }
     // Bogenschützen auf dem Turm
     const archers = 1 + Math.min(S.lv.speed, 3);
     for (let k = 0; k < archers; k++) {
       const a = Math.PI * 0.25 + k * Math.PI * 2 / archers + i;
       const ax = x + Math.cos(a) * (archers > 1 ? 9 : 0), ay = y + Math.sin(a) * (archers > 1 ? 9 : 0) + 4;
-      ctx.fillStyle = '#2e7d32'; ctx.beginPath(); ctx.arc(ax, ay, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = ['#2e7d32', '#2e7d32', '#1f8fb8', '#7b3fc4'][tier(S.lv.speed)]; ctx.beginPath(); ctx.arc(ax, ay, 4.5, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#f1c27d'; ctx.beginPath(); ctx.arc(ax, ay - 3, 2.6, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = '#6b4520'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(ax + 3, ay, 5, -1.2, 1.2); ctx.stroke();
     }
@@ -676,7 +712,7 @@ function drawCastle() {
     ctx.strokeStyle = '#4a3420'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(fx, y); ctx.lineTo(fx, y - 34); ctx.stroke();
     const wave = Math.sin(S.time * 5 + i) * 3;
-    ctx.fillStyle = S.lv.arrow >= 4 ? '#ffcf3f' : '#d63b2f';
+    ctx.fillStyle = ['#d63b2f', '#ffcf3f', '#4fd2ff', '#b65cff'][aT];
     ctx.beginPath(); ctx.moveTo(fx, y - 34); ctx.lineTo(fx + 20, y - 29 + wave); ctx.lineTo(fx, y - 22); ctx.closePath(); ctx.fill();
   });
 
@@ -840,6 +876,10 @@ function drawEnemy(e) {
   if (e.hp < e.maxHp) hpBar(e.x, e.y - r - 12 + (fly ? bob : 0), Math.max(22, r * 2), e.hp / e.maxHp, '#e84a3c');
 }
 
+// Look-Stufen: 1 = Gold (ab Stufe 4), 2 = Diamant (ab Stufe 10), 3 = Magie (ab Stufe 15)
+function tier(lv) { return lv >= 15 ? 3 : lv >= 10 ? 2 : lv >= 4 ? 1 : 0; }
+const TIER_NAMES = ['', 'Gold', 'Diamant', 'Magie'];
+function pulse(speed) { return 0.5 + 0.5 * Math.sin(S.time * (speed || 4)); }
 // Wie die Upgrades aussehen (Stufen werden gedeckelt, damit nichts riesig wird)
 function wallThick() { return 16 + Math.min(S.lv.wall, 6) * 4; }
 function towerH() { return Math.min(S.lv.arrow, 6) * 6; }
@@ -857,6 +897,10 @@ function drawSoldier(s) {
   const ks = knightScale();
   ctx.scale(ks, ks);
   ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(1, 10, 10, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+  if (S.lv.soldier >= 15) {
+    ctx.strokeStyle = 'rgba(199,125,255,' + (0.4 + pulse(4) * 0.4) + ')'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(0, 9, 14 + pulse(4) * 3, 5 + pulse(4), 0, 0, Math.PI * 2); ctx.stroke();
+  }
   ctx.translate(0, bob);
 
   // Umhang (weht nach hinten)
@@ -881,14 +925,21 @@ function drawSoldier(s) {
   ctx.beginPath(); ctx.moveTo(cx * 5, cy * 5); ctx.lineTo(cx * 9, cy * 9); ctx.stroke();
   ctx.strokeStyle = '#ffcf3f'; ctx.lineWidth = 3;   // Parierstange
   ctx.beginPath(); ctx.moveTo(cx * 9 - cy * 5, cy * 9 + cx * 5); ctx.lineTo(cx * 9 + cy * 5, cy * 9 - cx * 5); ctx.stroke();
-  ctx.strokeStyle = '#eef2f6'; ctx.lineWidth = 3.5;  // Klinge
-  ctx.beginPath(); ctx.moveTo(cx * 10, cy * 10); ctx.lineTo(cx * 25, cy * 25); ctx.stroke();
+  const kTs = tier(S.lv.soldier), blade = 25 + (kTs >= 2 ? 4 : 0) + (kTs >= 3 ? 4 : 0);
+  if (kTs >= 2) { ctx.shadowColor = kTs >= 3 ? '#c77dff' : '#4fd2ff'; ctx.shadowBlur = 10; }
+  ctx.strokeStyle = kTs >= 3 ? '#f1dcff' : kTs === 2 ? '#c8f4ff' : '#eef2f6'; ctx.lineWidth = 3.5 + (kTs >= 2 ? 1 : 0);  // Klinge
+  ctx.beginPath(); ctx.moveTo(cx * 10, cy * 10); ctx.lineTo(cx * blade, cy * blade); ctx.stroke();
+  ctx.shadowBlur = 0;
   ctx.strokeStyle = '#9aa6b2'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(cx * 11, cy * 11); ctx.lineTo(cx * 23, cy * 23); ctx.stroke();
 
   // Rüstung
-  const goldArmor = S.lv.soldier >= 4;   // ab Stufe 4 goldene Rüstung
-  ctx.fillStyle = goldArmor ? '#f2c94c' : '#cfd6de'; ctx.beginPath(); ctx.arc(0, 2, 9, 0, Math.PI * 2); ctx.fill();
+  // Rüstung: Silber, ab Stufe 4 Gold, ab 10 Diamant, ab 15 Magie
+  const kT = tier(S.lv.soldier);
+  const armor = ['#cfd6de', '#f2c94c', '#9fe8ff', '#b88cff'][kT], helm = ['#e4e9ef', '#ffd966', '#c8f4ff', '#d8b8ff'][kT];
+  if (kT >= 2) { ctx.shadowColor = kT >= 3 ? '#c77dff' : '#4fd2ff'; ctx.shadowBlur = 6 + pulse(5) * 8; }
+  ctx.fillStyle = armor; ctx.beginPath(); ctx.arc(0, 2, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
   ctx.strokeStyle = '#5f6b78'; ctx.lineWidth = 1.8; ctx.stroke();
   // Wappenrock in Teamfarbe mit Goldgürtel
   ctx.fillStyle = col; ctx.fillRect(-4, -2, 8, 11);
@@ -908,11 +959,11 @@ function drawSoldier(s) {
   // Helm mit Visier und Federbusch
   ctx.save(); ctx.scale(flip, 1);
   const sway = Math.sin(S.time * 6 + s.idx) * 1.5 + (moving ? 2 : 0);
-  ctx.strokeStyle = '#e63946'; ctx.lineWidth = 4;
+  ctx.strokeStyle = kT >= 3 ? 'hsl(' + ((S.time * 200 + s.idx * 30) % 360) + ',90%,60%)' : kT === 2 ? '#2f9bff' : '#e63946'; ctx.lineWidth = 4;
   ctx.beginPath(); ctx.moveTo(0, -13); ctx.quadraticCurveTo(-6, -21 - sway * 0.5, -12 - sway, -12); ctx.stroke();
   ctx.strokeStyle = '#ffcf3f'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(0, -13); ctx.quadraticCurveTo(-6, -20 - sway * 0.5, -11 - sway, -12); ctx.stroke();
-  ctx.fillStyle = goldArmor ? '#ffd966' : '#e4e9ef'; ctx.beginPath(); ctx.arc(0, -6, 7.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = helm; ctx.beginPath(); ctx.arc(0, -6, 7.5, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = '#5f6b78'; ctx.lineWidth = 1.8; ctx.stroke();
   ctx.fillStyle = '#1d232b'; ctx.fillRect(-4, -7.5, 9, 3);              // Visierschlitz
   ctx.fillStyle = '#9fe8ff'; ctx.fillRect(0, -7, 2, 2); ctx.fillRect(3, -7, 2, 2); // leuchtende Augen
@@ -985,7 +1036,10 @@ function draw() {
   // mit "Schnellere Pfeile" ziehen sie einen Schweif hinter sich her
   const al = Math.min(S.lv.arrow, 6), sl = Math.min(S.lv.speed, 6);
   const alen = 14 + al * 2.5, aw = 2.5 + al * 0.6;
-  const shaft = al >= 4 ? '#e0a810' : '#4a3018', tip = al >= 4 ? '#fff3b0' : al >= 2 ? '#9aa6b2' : '#6b6b6b';
+  const aT = tier(S.lv.arrow);
+  const shaft = ['#4a3018', '#e0a810', '#5fd0ff', '#b65cff'][aT];
+  const tip = aT >= 3 ? '#ffffff' : aT === 2 ? '#e8fbff' : aT === 1 ? '#fff3b0' : al >= 2 ? '#9aa6b2' : '#6b6b6b';
+  const glow = ['', 'rgba(255,220,90,.35)', 'rgba(120,220,255,.5)', 'rgba(200,120,255,.55)'][aT];
   ctx.lineCap = 'round';
   for (const a of S.arrows) {
     const cx = Math.cos(a.dir), cy = Math.sin(a.dir);
@@ -993,8 +1047,15 @@ function draw() {
       ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = aw + 1;
       ctx.beginPath(); ctx.moveTo(a.x - cx * alen, a.y - cy * alen); ctx.lineTo(a.x - cx * (alen + sl * 7), a.y - cy * (alen + sl * 7)); ctx.stroke();
     }
-    if (al >= 4) {
-      ctx.strokeStyle = 'rgba(255,220,90,.35)'; ctx.lineWidth = aw + 5;
+    if (aT >= 3) {
+      // Regenbogen-Schweif
+      for (let k = 0; k < 5; k++) {
+        ctx.strokeStyle = 'hsla(' + ((S.time * 300 + k * 60) % 360) + ',90%,65%,' + (0.5 - k * 0.08) + ')'; ctx.lineWidth = aw;
+        ctx.beginPath(); ctx.moveTo(a.x - cx * (alen + k * 6), a.y - cy * (alen + k * 6)); ctx.lineTo(a.x - cx * (alen + k * 6 + 6), a.y - cy * (alen + k * 6 + 6)); ctx.stroke();
+      }
+    }
+    if (aT >= 1) {
+      ctx.strokeStyle = glow; ctx.lineWidth = aw + 5 + (aT >= 2 ? 3 : 0);
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x - cx * alen, a.y - cy * alen); ctx.stroke();
     }
     ctx.strokeStyle = shaft; ctx.lineWidth = aw;
@@ -1005,11 +1066,11 @@ function draw() {
     ctx.moveTo(a.x + cx * ts, a.y + cy * ts); ctx.lineTo(a.x - cy * ts * 0.6, a.y + cx * ts * 0.6); ctx.lineTo(a.x + cy * ts * 0.6, a.y - cx * ts * 0.6); ctx.closePath(); ctx.fill();
     if (S.lv.fire > 0) {
       const fl = 4 + Math.min(S.lv.fire, 4) * 1.5 + Math.sin(S.time * 30 + a.x) * 1.5;
-      ctx.fillStyle = 'rgba(255,120,30,.75)'; ctx.beginPath(); ctx.arc(a.x, a.y, fl, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(255,230,90,.9)'; ctx.beginPath(); ctx.arc(a.x, a.y, fl * 0.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = S.lv.fire >= 10 ? 'rgba(60,140,255,.75)' : 'rgba(255,120,30,.75)'; ctx.beginPath(); ctx.arc(a.x, a.y, fl, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = S.lv.fire >= 10 ? 'rgba(220,245,255,.95)' : 'rgba(255,230,90,.9)'; ctx.beginPath(); ctx.arc(a.x, a.y, fl * 0.5, 0, Math.PI * 2); ctx.fill();
     }
     // Federn
-    ctx.strokeStyle = al >= 4 ? '#ffffff' : '#d63b2f'; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = aT >= 1 ? '#ffffff' : '#d63b2f'; ctx.lineWidth = 1.5;
     const ex = a.x - cx * alen, ey = a.y - cy * alen;
     ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - cx * 4 - cy * 3, ey - cy * 4 + cx * 3); ctx.moveTo(ex, ey); ctx.lineTo(ex - cx * 4 + cy * 3, ey - cy * 4 - cx * 3); ctx.stroke();
   }
@@ -1061,7 +1122,7 @@ function renderBar() {
     const el = barButtons[u.id];
     const cost = upgradeCost(u);
     el.cost.textContent = '🪙 ' + cost;
-    if (el.lv) el.lv.textContent = 'Stufe ' + S.lv[u.id];
+    if (el.lv) { const t = tier(S.lv[u.id]); el.lv.textContent = 'Stufe ' + S.lv[u.id] + (t ? ' · ' + TIER_NAMES[t] : ''); }
     el.b.disabled = phase !== 'play' || S.coins < cost || (u.id === 'repair' && S.hp >= S.maxHp);
   }
 }
