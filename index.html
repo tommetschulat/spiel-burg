@@ -66,6 +66,8 @@ const W = 1000, H = 700;
 const WALL = { l: 370, r: 630, t: 220, b: 480 };
 const GATE = { x: 500, y: 480, w: 56 };
 const TOWERS = [[370, 220], [630, 220], [370, 480], [630, 480]];
+const MOAT = { inner: 36, outer: 72 };   // Abstand des Wassergrabens zur Mauer
+const BRIDGE_LEN = MOAT.outer - 11 + 4; // Zugbrücke vom Tor bis übers Wasser
 const HUD_COIN = { x: 250, y: 34 };
 
 const ENEMY_TYPES = {
@@ -78,11 +80,11 @@ const SQUAD_KILLS = 20;    // nach so vielen Siegen verschwinden sie
 const SQUAD_COLORS = ['#3b7dd8', '#9b4fc4'];
 
 const UPGRADES = [
-  { id: 'wall',    ico: '🧱', nm: 'Dickere Mauern',   base: 15, mult: 1.5 },
-  { id: 'arrow',   ico: '🏹', nm: 'Bessere Pfeile',   base: 20, mult: 1.6 },
-  { id: 'speed',   ico: '⚡', nm: 'Schnellere Pfeile', base: 20, mult: 1.6 },
-  { id: 'soldier', ico: '⚔️', nm: 'Stärkere Kämpfer', base: 25, mult: 1.6 },
-  { id: 'repair',  ico: '🔧', nm: 'Burg reparieren',  base: 10, mult: 1.25 },
+  { id: 'wall',    ico: '🧱', nm: 'Dickere Mauern',   base: 10, mult: 1.35 },
+  { id: 'arrow',   ico: '🏹', nm: 'Bessere Pfeile',   base: 12, mult: 1.4 },
+  { id: 'speed',   ico: '⚡', nm: 'Schnellere Pfeile', base: 12, mult: 1.4 },
+  { id: 'soldier', ico: '⚔️', nm: 'Stärkere Kämpfer', base: 15, mult: 1.4 },
+  { id: 'repair',  ico: '🔧', nm: 'Burg reparieren',  base: 6,  mult: 1.2 },
 ];
 
 let S = null;            // Spielzustand
@@ -126,19 +128,24 @@ function crossesCastle(ax, ay, bx, by, m) {
 }
 // Läuft um die Burg herum statt durch die Mauer
 function walkAround(o, tx, ty, speed, dt) {
-  if (!crossesCastle(o.x, o.y, tx, ty, 12)) return moveTo(o, tx, ty, speed, dt);
-  const m = 24;
+  if (!crossesCastle(o.x, o.y, tx, ty, MOAT.outer)) return moveTo(o, tx, ty, speed, dt);
+  const m = MOAT.outer + 10;
   const corners = [[WALL.l - m, WALL.t - m], [WALL.r + m, WALL.t - m], [WALL.l - m, WALL.b + m], [WALL.r + m, WALL.b + m]];
   let best = null, bd = 1e9;
   for (const [cx, cy] of corners) {
     if (Math.hypot(cx - o.x, cy - o.y) < 3) continue;
-    if (crossesCastle(o.x, o.y, cx, cy, 12)) continue;
+    if (crossesCastle(o.x, o.y, cx, cy, MOAT.outer)) continue;
     const d = Math.hypot(cx - o.x, cy - o.y) + Math.hypot(tx - cx, ty - cy);
     if (d < bd) { bd = d; best = [cx, cy]; }
   }
   if (!best) return moveTo(o, tx, ty, speed, dt);
   moveTo(o, best[0], best[1], speed, dt);
   return false;
+}
+function inMoat(p) {
+  const dx = Math.max(WALL.l - p.x, 0, p.x - WALL.r), dy = Math.max(WALL.t - p.y, 0, p.y - WALL.b);
+  const d = Math.max(dx, dy);
+  return d > MOAT.inner && d < MOAT.outer;
 }
 function moveTo(o, tx, ty, speed, dt) {
   const dx = tx - o.x, dy = ty - o.y, d = Math.hypot(dx, dy);
@@ -240,6 +247,11 @@ function buy(id) {
 // ====== Update ======
 function update(dt) {
   S.time += dt;
+  // Zugbrücke: geht runter, wenn Kämpfer rausgehen, und danach wieder hoch
+  const needBridge = S.soldiers.some(s => s.path.length) || S.houses.some(h => h.active && h.toSpawn > 0);
+  if (needBridge) S.bridgeHold = 1.2; else S.bridgeHold = Math.max(0, (S.bridgeHold || 0) - dt);
+  const want = S.bridgeHold > 0 ? 1 : 0;
+  S.bridge = clamp((S.bridge || 0) + (want ? 1.6 : -1.0) * dt, 0, 1);
   if (S.banner && phase !== 'start') { S.banner.t -= dt; if (S.banner.t <= 0) S.banner = null; }
   S.shake = Math.max(0, S.shake - dt);
 
@@ -272,7 +284,7 @@ function update(dt) {
         h.toSpawn--; h.spawnCd = 0.25;
         const idx = SQUAD_SIZE - 1 - h.toSpawn;
         S.soldiers.push({ house: h, x: h.x, y: h.y + 18, r: 9, hp: S.soldierHp, maxHp: S.soldierHp,
-          path: [{ x: h.x, y: 445 }, { x: GATE.x + rnd(-10, 10), y: GATE.y + 2 }, { x: GATE.x + rnd(-14, 14), y: GATE.y + 34 }],
+          path: [{ x: h.x, y: 445 }, { x: GATE.x + rnd(-10, 10), y: GATE.y + 2 }, { x: GATE.x + rnd(-8, 8), y: GATE.y + 40 }, { x: GATE.x + rnd(-14, 14), y: GATE.y + MOAT.outer + 18 }],
           atkCd: 0, swing: 0, dir: Math.PI / 2, idx, dead: false });
       }
     } else if (!S.soldiers.some(s => s.house === h && !s.dead)) {
@@ -286,6 +298,7 @@ function update(dt) {
     if (s.dead) continue;
     s.swing = Math.max(0, s.swing - dt);
     if (s.path.length) {
+      if (s.path.length <= 2 && S.bridge < 0.98) continue;   // warten, bis die Brücke unten ist
       if (moveTo(s, s.path[0].x, s.path[0].y, 80, dt)) s.path.shift();
       continue;
     }
@@ -301,7 +314,7 @@ function update(dt) {
     } else {
       // Wache vor dem Tor
       const gx = GATE.x + (s.idx - 4.5) * 20;
-      const gy = GATE.y + 40 + s.house.id * 22;
+      const gy = GATE.y + MOAT.outer + 30 + s.house.id * 22;
       walkAround(s, gx, gy, 60, dt);
     }
     // nicht durch die Mauer laufen
@@ -342,8 +355,10 @@ function update(dt) {
       }
     } else {
       e.attacking = false;
-      if (foe && fd < 70) moveTo(e, foe.x, foe.y, e.speed, dt);
-      else moveTo(e, wp.x, wp.y, e.speed, dt);
+      e.swim = inMoat(e);
+      const sp = e.swim ? e.speed * 0.45 : e.speed;   // im Wasser schwimmen sie langsamer
+      if (foe && fd < 70) moveTo(e, foe.x, foe.y, sp, dt);
+      else moveTo(e, wp.x, wp.y, sp, dt);
     }
   }
   // Gegner schubsen sich auseinander
@@ -464,7 +479,57 @@ function resize() {
   cv.width = Math.round(W * scale * dpr); cv.height = Math.round(H * scale * dpr);
 }
 
+function drawMoat() {
+  const o = MOAT.outer, i = MOAT.inner;
+  // Uferrand
+  ctx.fillStyle = '#8a7346';
+  roundRect(WALL.l - o - 4, WALL.t - o - 4, WALL.r - WALL.l + 2 * o + 8, WALL.b - WALL.t + 2 * o + 8, 34); ctx.fill();
+  // Wasser
+  const g = ctx.createLinearGradient(0, WALL.t - o, 0, WALL.b + o);
+  g.addColorStop(0, '#3f9be0'); g.addColorStop(1, '#2a74b8');
+  ctx.fillStyle = g;
+  roundRect(WALL.l - o, WALL.t - o, WALL.r - WALL.l + 2 * o, WALL.b - WALL.t + 2 * o, 30); ctx.fill();
+  // Insel mit der Burg
+  ctx.fillStyle = '#7c6a44';
+  roundRect(WALL.l - i - 3, WALL.t - i - 3, WALL.r - WALL.l + 2 * i + 6, WALL.b - WALL.t + 2 * i + 6, 16); ctx.fill();
+  ctx.fillStyle = '#6aa84f';
+  roundRect(WALL.l - i, WALL.t - i, WALL.r - WALL.l + 2 * i, WALL.b - WALL.t + 2 * i, 14); ctx.fill();
+  // Wellen
+  ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  const mid = (i + o) / 2;
+  for (let k = 0; k < 28; k++) {
+    const t = (k / 28 + S.time * 0.01) % 1;
+    const per = 2 * (WALL.r - WALL.l + 2 * mid) + 2 * (WALL.b - WALL.t + 2 * mid);
+    let d = t * per, x, y;
+    const w = WALL.r - WALL.l + 2 * mid, h = WALL.b - WALL.t + 2 * mid;
+    if (d < w) { x = WALL.l - mid + d; y = WALL.t - mid; }
+    else if ((d -= w) < h) { x = WALL.r + mid; y = WALL.t - mid + d; }
+    else if ((d -= h) < w) { x = WALL.r + mid - d; y = WALL.b + mid; }
+    else { d -= w; x = WALL.l - mid; y = WALL.b + mid - d; }
+    const off = Math.sin(S.time * 2 + k * 1.7) * 8;
+    ctx.beginPath(); ctx.arc(x + off * 0.5, y + off * 0.3, 5, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+  }
+}
+function drawBridge() {
+  const len = BRIDGE_LEN * (0.12 + 0.88 * S.bridge);   // hochgezogen sieht man sie verkürzt
+  const x0 = GATE.x - 22, y0 = GATE.y + 11, w = 44;
+  // Schatten aufs Wasser
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(x0 + 4, y0 + 4, w, len);
+  // Bretter
+  ctx.fillStyle = S.bridge > 0.5 ? '#9b6a37' : '#7d522a';
+  ctx.fillRect(x0, y0, w, len);
+  ctx.strokeStyle = '#5a3818'; ctx.lineWidth = 1.5;
+  for (let y = y0 + 7; y < y0 + len; y += 7) { ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); ctx.stroke(); }
+  ctx.strokeRect(x0, y0, w, len);
+  // Ketten von der Mauer zum Brückenende
+  ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+  for (const sx of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(GATE.x + sx * 30, GATE.y - 4); ctx.lineTo(GATE.x + sx * 21, y0 + len - 2); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
 function drawCastle() {
+  drawMoat();
   // Hof
   ctx.fillStyle = '#d8c08a';
   ctx.fillRect(WALL.l, WALL.t, WALL.r - WALL.l, WALL.b - WALL.t);
@@ -491,6 +556,7 @@ function drawCastle() {
   ctx.strokeStyle = '#4e2e12'; ctx.lineWidth = 2;
   for (let i = 1; i < 5; i++) { const x = GATE.x - GATE.w / 2 + i * GATE.w / 5; ctx.beginPath(); ctx.moveTo(x, GATE.y - 12); ctx.lineTo(x, GATE.y + 12); ctx.stroke(); }
   ctx.strokeRect(GATE.x - GATE.w / 2, GATE.y - 12, GATE.w, 24);
+  drawBridge();
 
   // Türme
   TOWERS.forEach(([x, y], i) => {
@@ -575,6 +641,14 @@ function drawEnemy(e) {
   ctx.fillStyle = '#fff';
   ctx.beginPath(); ctx.moveTo(-e.r * 0.3, e.r * 0.4); ctx.lineTo(-e.r * 0.22, e.r * 0.62); ctx.lineTo(-e.r * 0.14, e.r * 0.4); ctx.fill();
   ctx.beginPath(); ctx.moveTo(e.r * 0.14, e.r * 0.4); ctx.lineTo(e.r * 0.22, e.r * 0.62); ctx.lineTo(e.r * 0.3, e.r * 0.4); ctx.fill();
+  if (e.swim) {
+    // im Wasser: untere Hälfte unter Wasser, Wellenring drumherum
+    ctx.fillStyle = 'rgba(46,124,196,.85)';
+    ctx.beginPath(); ctx.ellipse(0, e.r * 0.45, e.r * 1.35, e.r * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 2;
+    const rr = 1 + (S.time * 1.5 + e.seed) % 1 * 0.5;
+    ctx.beginPath(); ctx.ellipse(0, e.r * 0.45, e.r * 1.35 * rr, e.r * 0.7 * rr, 0, 0, Math.PI * 2); ctx.stroke();
+  }
   ctx.restore();
   if (e.hp < e.maxHp) hpBar(e.x, e.y - e.r - 12, e.r * 2, e.hp / e.maxHp, '#e84a3c');
 }
@@ -683,19 +757,31 @@ function draw() {
 
 // ====== Upgrade-Leiste ======
 const bar = document.getElementById('bar');
-function renderBar() {
-  if (!S) return;
-  bar.innerHTML = '';
+// Die Knöpfe werden nur einmal gebaut und danach nur aktualisiert,
+// damit ein Tipp nie auf einen gerade ersetzten Knopf fällt.
+const barButtons = {};
+function buildBar() {
   for (const u of UPGRADES) {
-    const cost = upgradeCost(u);
     const b = document.createElement('button');
     b.className = 'up';
-    const lvl = u.id === 'repair' ? '' : 'Stufe ' + S.lv[u.id];
     b.innerHTML = '<span class="ico">' + u.ico + '</span><span class="nm">' + u.nm + '</span>' +
-      '<span class="cost">🪙 ' + cost + '</span>' + (lvl ? '<span class="lv">' + lvl + '</span>' : '');
-    b.disabled = phase !== 'play' || S.coins < cost || (u.id === 'repair' && S.hp >= S.maxHp);
-    b.addEventListener('click', () => buy(u.id));
+      '<span class="cost"></span>' + (u.id === 'repair' ? '' : '<span class="lv"></span>');
+    // pointerdown reagiert sofort beim Antippen
+    b.addEventListener('pointerdown', ev => { ev.preventDefault(); buy(u.id); });
+    // Tastatur (Enter/Leertaste)
+    b.addEventListener('click', ev => { if (ev.detail === 0) buy(u.id); });
     bar.appendChild(b);
+    barButtons[u.id] = { b, cost: b.querySelector('.cost'), lv: b.querySelector('.lv') };
+  }
+}
+function renderBar() {
+  if (!S) return;
+  for (const u of UPGRADES) {
+    const el = barButtons[u.id];
+    const cost = upgradeCost(u);
+    el.cost.textContent = '🪙 ' + cost;
+    if (el.lv) el.lv.textContent = 'Stufe ' + S.lv[u.id];
+    el.b.disabled = phase !== 'play' || S.coins < cost || (u.id === 'repair' && S.hp >= S.maxHp);
   }
 }
 
@@ -759,6 +845,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 buildBackground();
+buildBar();
 newGame();
 showStart();
 renderBar();
