@@ -71,9 +71,13 @@ const BRIDGE_LEN = MOAT.outer - 11 + 4; // Zugbrücke vom Tor bis übers Wasser
 const HUD_COIN = { x: 250, y: 34 };
 
 const ENEMY_TYPES = {
-  goblin: { hp: 3,  speed: 55, dmg: 2, coins: 2, r: 11, body: '#63b33c', dark: '#2f6a1a' },
-  ork:    { hp: 7,  speed: 38, dmg: 4, coins: 4, r: 15, body: '#9a8636', dark: '#4d4218' },
-  troll:  { hp: 22, speed: 24, dmg: 9, coins: 10, r: 21, body: '#7d8fa6', dark: '#435468' },
+  goblin:   { name: 'Goblin',          from: 1, weight: 10, hp: 3,  speed: 55, dmg: 2,  coins: 2,  r: 11, body: '#63b33c', dark: '#2f6a1a' },
+  ork:      { name: 'Ork',             from: 2, weight: 7,  hp: 7,  speed: 38, dmg: 4,  coins: 4,  r: 15, body: '#9a8636', dark: '#4d4218' },
+  skelett:  { name: 'Skelett',         from: 3, weight: 6,  hp: 6,  speed: 50, dmg: 3,  coins: 4,  r: 13, body: '#eeeae0', dark: '#8c867a' },
+  troll:    { name: 'Troll',           from: 4, weight: 3,  hp: 22, speed: 24, dmg: 9,  coins: 10, r: 21, body: '#7d8fa6', dark: '#435468' },
+  fledermaus: { name: 'Riesenfledermaus', from: 5, weight: 5, hp: 5, speed: 78, dmg: 3, coins: 5,  r: 11, body: '#6b3fa0', dark: '#3a1f5c', flies: true },
+  ritter:   { name: 'Schwarzer Ritter', from: 7, weight: 3,  hp: 35, speed: 32, dmg: 10, coins: 15, r: 17, body: '#2b2d35', dark: '#0f1014' },
+  zyklop:   { name: 'Zyklop',          from: 9, weight: 1.2, hp: 80, speed: 18, dmg: 18, coins: 30, r: 27, body: '#c08457', dark: '#7a4a22' },
 };
 const SQUAD_SIZE = 10;     // Kämpfer pro Haus
 const SQUAD_KILLS = 20;    // nach so vielen Siegen verschwinden sie
@@ -170,17 +174,23 @@ function startWave() {
   const n = S.wave;
   const q = [];
   const count = 4 + n * 3;
+  // alle Gegnerarten, die ab dieser Welle dabei sind; Goblins werden später seltener
+  const pool = Object.entries(ENEMY_TYPES).filter(([, T]) => n >= T.from)
+    .map(([type, T]) => [type, type === 'goblin' ? Math.max(2, T.weight - n) : T.weight]);
+  const total = pool.reduce((sum, [, w]) => sum + w, 0);
+  // eine neue Gegnerart kommt in ihrer ersten Welle mindestens zweimal
+  const fresh = pool.find(([type]) => ENEMY_TYPES[type].from === n && n > 1);
   for (let i = 0; i < count; i++) {
-    let type = 'goblin';
-    const roll = Math.random();
-    if (n >= 4 && roll < Math.min(0.25, 0.05 * (n - 3))) type = 'troll';
-    else if (n >= 2 && roll < Math.min(0.6, 0.15 + 0.07 * n)) type = 'ork';
+    let roll = Math.random() * total, type = pool[0][0];
+    for (const [t, w] of pool) { if ((roll -= w) <= 0) { type = t; break; } }
     q.push(type);
   }
+  if (fresh) { q[Math.floor(count / 3)] = fresh[0]; q[Math.floor(count * 2 / 3)] = fresh[0]; }
   S.queue = q;
   S.inWave = true;
   S.spawnCd = 0.5;
-  S.banner = { text: 'Welle ' + n, t: 2 };
+  S.banner = fresh ? { text: 'Welle ' + n + ': Neuer Gegner: ' + ENEMY_TYPES[fresh[0]].name + '!', t: 3 }
+                   : { text: 'Welle ' + n, t: 2 };
 }
 function spawnEnemy(type) {
   const T = ENEMY_TYPES[type];
@@ -192,7 +202,7 @@ function spawnEnemy(type) {
   else { x = -25; y = rnd(0, H); }
   const hp = Math.round(T.hp * (1 + 0.1 * (S.wave - 1)));
   S.enemies.push({ type, x, y, hp, maxHp: hp, speed: T.speed * rnd(0.9, 1.1), dmg: T.dmg, r: T.r,
-    coins: T.coins, atkCd: 0.5, flash: 0, seed: Math.random() * 10, dir: 0, dead: false });
+    coins: T.coins, flies: !!T.flies, atkCd: 0.5, flash: 0, seed: Math.random() * 10, dir: 0, dead: false });
 }
 
 // ====== Schaden und Belohnung ======
@@ -356,7 +366,7 @@ function update(dt) {
       }
     } else {
       e.attacking = false;
-      e.swim = inMoat(e);
+      e.swim = !e.flies && inMoat(e);   // Fledermäuse fliegen einfach drüber
       const sp = e.swim ? e.speed * 0.45 : e.speed;   // im Wasser schwimmen sie langsamer
       if (foe && fd < 70) moveTo(e, foe.x, foe.y, sp, dt);
       else moveTo(e, wp.x, wp.y, sp, dt);
@@ -663,48 +673,130 @@ function roundRect(x, y, w, h, r) {
 }
 
 function drawEnemy(e) {
-  const T = ENEMY_TYPES[e.type];
-  const bob = e.attacking ? 0 : Math.sin(S.time * 10 + e.seed) * 1.5;
-  ctx.save(); ctx.translate(e.x, e.y + bob);
-  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(2, e.r * 0.8, e.r * 0.9, e.r * 0.35, 0, 0, Math.PI * 2); ctx.fill();
-  // Keule
+  const T = ENEMY_TYPES[e.type], r = e.r, k = e.type;
+  const fly = e.flies;
+  const bob = fly ? Math.sin(S.time * 8 + e.seed) * 4 - 6 : (e.attacking ? 0 : Math.sin(S.time * 10 + e.seed) * 1.5);
+  ctx.save(); ctx.translate(e.x, e.y);
+  // Schatten (bei Fliegern kleiner und weiter unten)
+  ctx.fillStyle = 'rgba(0,0,0,.25)';
+  ctx.beginPath(); ctx.ellipse(2, r * (fly ? 1.4 : 0.8), r * (fly ? 0.6 : 0.9), r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.translate(0, bob);
   const sw = e.attacking ? Math.sin(S.time * 12 + e.seed) * 0.6 : 0;
   const ca = e.dir + 0.9 + sw;
-  ctx.strokeStyle = '#6b4520'; ctx.lineWidth = e.r * 0.3; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(Math.cos(ca) * e.r * 0.6, Math.sin(ca) * e.r * 0.6);
-  ctx.lineTo(Math.cos(ca - 0.6) * e.r * 1.6, Math.sin(ca - 0.6) * e.r * 1.6); ctx.stroke();
+  const wx1 = Math.cos(ca) * r * 0.6, wy1 = Math.sin(ca) * r * 0.6;
+  const wx2 = Math.cos(ca - 0.6) * r * 1.7, wy2 = Math.sin(ca - 0.6) * r * 1.7;
+  ctx.lineCap = 'round';
+
+  // Flügel der Fledermaus
+  if (k === 'fledermaus') {
+    const flap = Math.sin(S.time * 18 + e.seed) * 0.5;
+    ctx.fillStyle = T.dark;
+    for (const sd of [-1, 1]) {
+      ctx.save(); ctx.scale(sd, 1); ctx.rotate(flap);
+      ctx.beginPath(); ctx.moveTo(r * 0.5, -r * 0.2);
+      ctx.lineTo(r * 2.2, -r * 0.9); ctx.lineTo(r * 1.9, r * 0.1); ctx.lineTo(r * 1.5, -r * 0.1);
+      ctx.lineTo(r * 1.2, r * 0.5); ctx.lineTo(r * 0.9, r * 0.1); ctx.lineTo(r * 0.5, r * 0.5); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  }
+  // Waffe
+  if (k === 'ritter') {           // Schwert
+    ctx.strokeStyle = '#8a1c1c'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(wx1, wy1); ctx.lineTo(wx1 + (wx2 - wx1) * 0.2, wy1 + (wy2 - wy1) * 0.2); ctx.stroke();
+    ctx.strokeStyle = '#c9ced6'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(wx1 + (wx2 - wx1) * 0.2, wy1 + (wy2 - wy1) * 0.2); ctx.lineTo(wx2 * 1.15, wy2 * 1.15); ctx.stroke();
+  } else if (k === 'skelett') {   // Knochen
+    ctx.strokeStyle = '#f4f1e8'; ctx.lineWidth = r * 0.25;
+    ctx.beginPath(); ctx.moveTo(wx1, wy1); ctx.lineTo(wx2, wy2); ctx.stroke();
+    ctx.fillStyle = '#f4f1e8'; ctx.beginPath(); ctx.arc(wx2, wy2, r * 0.22, 0, Math.PI * 2); ctx.fill();
+  } else if (k !== 'fledermaus') { // Keule (beim Zyklop mit Stacheln)
+    ctx.strokeStyle = '#6b4520'; ctx.lineWidth = r * 0.3;
+    ctx.beginPath(); ctx.moveTo(wx1, wy1); ctx.lineTo(wx2, wy2); ctx.stroke();
+    if (k === 'zyklop') {
+      ctx.fillStyle = '#5a3a1a'; ctx.beginPath(); ctx.arc(wx2, wy2, r * 0.32, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ddd';
+      for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; ctx.beginPath(); ctx.arc(wx2 + Math.cos(a) * r * 0.32, wy2 + Math.sin(a) * r * 0.32, 2.5, 0, Math.PI * 2); ctx.fill(); }
+    }
+  }
   // Körper
   ctx.fillStyle = e.flash > 0 ? '#ffffff' : T.body;
-  ctx.beginPath(); ctx.arc(0, 0, e.r, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = T.dark; ctx.lineWidth = 2.5; ctx.stroke();
-  // Ohren / Hörner
-  ctx.fillStyle = e.type === 'troll' ? '#e8e0c8' : T.body;
-  for (const s of [-1, 1]) {
-    ctx.beginPath(); ctx.moveTo(s * e.r * 0.55, -e.r * 0.75); ctx.lineTo(s * e.r * 1.05, -e.r * 1.25); ctx.lineTo(s * e.r * 0.9, -e.r * 0.45); ctx.closePath(); ctx.fill();
+
+  if (k === 'skelett') {
+    // Totenkopf: dunkle Augenhöhlen, Nase, Zahnreihe
+    ctx.fillStyle = '#2a2622';
+    for (const sd of [-1, 1]) { ctx.beginPath(); ctx.arc(sd * r * 0.38, -r * 0.15, r * 0.27, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#ff3b3b';
+    for (const sd of [-1, 1]) { ctx.beginPath(); ctx.arc(sd * r * 0.38, -r * 0.15, r * 0.09, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#2a2622';
+    ctx.beginPath(); ctx.moveTo(0, r * 0.08); ctx.lineTo(-r * 0.1, r * 0.25); ctx.lineTo(r * 0.1, r * 0.25); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#2a2622'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-r * 0.4, r * 0.48); ctx.lineTo(r * 0.4, r * 0.48);
+    for (let i = -3; i <= 3; i++) { ctx.moveTo(i * r * 0.12, r * 0.38); ctx.lineTo(i * r * 0.12, r * 0.58); }
+    ctx.stroke();
+  } else if (k === 'ritter') {
+    // Helm mit Hörnern und rot glühendem Visier
+    ctx.fillStyle = '#d8d0c0';
+    for (const sd of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(sd * r * 0.6, -r * 0.6); ctx.quadraticCurveTo(sd * r * 1.4, -r * 0.9, sd * r * 1.2, -r * 1.6); ctx.quadraticCurveTo(sd * r * 1.0, -r * 1.0, sd * r * 0.4, -r * 0.85); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(-r * 0.6, -r * 0.3, r * 1.2, r * 0.32);
+    ctx.fillStyle = '#ff2a2a'; ctx.shadowColor = '#ff2a2a'; ctx.shadowBlur = 8;
+    ctx.fillRect(-r * 0.45, -r * 0.22, r * 0.3, r * 0.16); ctx.fillRect(r * 0.15, -r * 0.22, r * 0.3, r * 0.16);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, r * 0.05); ctx.lineTo(0, r * 0.7); ctx.stroke();
+    // Schild
+    ctx.fillStyle = '#5a0f14'; ctx.strokeStyle = '#999'; ctx.lineWidth = 1.5;
+    const sx = -Math.cos(e.dir) * r * 0.9, sy = r * 0.3;
+    ctx.beginPath(); ctx.moveTo(sx - r * 0.4, sy - r * 0.45); ctx.lineTo(sx + r * 0.4, sy - r * 0.45); ctx.lineTo(sx + r * 0.4, sy + r * 0.1);
+    ctx.quadraticCurveTo(sx + r * 0.4, sy + r * 0.45, sx, sy + r * 0.6); ctx.quadraticCurveTo(sx - r * 0.4, sy + r * 0.45, sx - r * 0.4, sy + r * 0.1); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  } else {
+    // Ohren / Hörner
+    if (k !== 'zyklop') {
+      ctx.fillStyle = k === 'troll' ? '#e8e0c8' : T.body;
+      const ear = k === 'fledermaus' ? 1.5 : 1.25;
+      for (const sd of [-1, 1]) {
+        ctx.beginPath(); ctx.moveTo(sd * r * 0.55, -r * 0.75); ctx.lineTo(sd * r * 1.05, -r * ear); ctx.lineTo(sd * r * 0.9, -r * 0.45); ctx.closePath(); ctx.fill();
+      }
+    }
+    const lx = Math.cos(e.dir) * r * 0.15, ly = Math.sin(e.dir) * r * 0.15;
+    if (k === 'zyklop') {
+      // ein großes Auge und ein Horn
+      ctx.fillStyle = '#e8e0c8';
+      ctx.beginPath(); ctx.moveTo(-r * 0.15, -r * 0.85); ctx.lineTo(0, -r * 1.35); ctx.lineTo(r * 0.15, -r * 0.85); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -r * 0.2, r * 0.38, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = T.dark; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#d4a017'; ctx.beginPath(); ctx.arc(lx * 1.5, -r * 0.2 + ly * 1.5, r * 0.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(lx * 1.5, -r * 0.2 + ly * 1.5, r * 0.1, 0, Math.PI * 2); ctx.fill();
+    } else {
+      for (const sd of [-1, 1]) {
+        ctx.fillStyle = k === 'fledermaus' ? '#ffe14d' : '#fff';
+        ctx.beginPath(); ctx.arc(sd * r * 0.38, -r * 0.15, r * 0.28, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#c0141c'; ctx.beginPath(); ctx.arc(sd * r * 0.38 + lx, -r * 0.15 + ly, r * 0.14, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // Mund mit Zähnen
+    ctx.strokeStyle = T.dark; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-r * 0.4, r * 0.4); ctx.lineTo(r * 0.4, r * 0.4); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.moveTo(-r * 0.3, r * 0.4); ctx.lineTo(-r * 0.22, r * 0.62); ctx.lineTo(-r * 0.14, r * 0.4); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(r * 0.14, r * 0.4); ctx.lineTo(r * 0.22, r * 0.62); ctx.lineTo(r * 0.3, r * 0.4); ctx.fill();
   }
-  // Augen
-  const lx = Math.cos(e.dir) * e.r * 0.15, ly = Math.sin(e.dir) * e.r * 0.15;
-  for (const s of [-1, 1]) {
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s * e.r * 0.38, -e.r * 0.15, e.r * 0.28, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#c0141c'; ctx.beginPath(); ctx.arc(s * e.r * 0.38 + lx, -e.r * 0.15 + ly, e.r * 0.14, 0, Math.PI * 2); ctx.fill();
-  }
-  // Mund mit Zähnen
-  ctx.strokeStyle = T.dark; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(-e.r * 0.4, e.r * 0.4); ctx.lineTo(e.r * 0.4, e.r * 0.4); ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.beginPath(); ctx.moveTo(-e.r * 0.3, e.r * 0.4); ctx.lineTo(-e.r * 0.22, e.r * 0.62); ctx.lineTo(-e.r * 0.14, e.r * 0.4); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(e.r * 0.14, e.r * 0.4); ctx.lineTo(e.r * 0.22, e.r * 0.62); ctx.lineTo(e.r * 0.3, e.r * 0.4); ctx.fill();
   if (e.swim) {
     // im Wasser: untere Hälfte unter Wasser, Wellenring drumherum
     ctx.fillStyle = 'rgba(46,124,196,.85)';
-    ctx.beginPath(); ctx.ellipse(0, e.r * 0.45, e.r * 1.35, e.r * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, r * 0.45, r * 1.35, r * 0.7, 0, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 2;
     const rr = 1 + (S.time * 1.5 + e.seed) % 1 * 0.5;
-    ctx.beginPath(); ctx.ellipse(0, e.r * 0.45, e.r * 1.35 * rr, e.r * 0.7 * rr, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(0, r * 0.45, r * 1.35 * rr, r * 0.7 * rr, 0, 0, Math.PI * 2); ctx.stroke();
   }
   ctx.restore();
-  if (e.hp < e.maxHp) hpBar(e.x, e.y - e.r - 12, e.r * 2, e.hp / e.maxHp, '#e84a3c');
+  if (e.hp < e.maxHp) hpBar(e.x, e.y - r - 12 + (fly ? bob : 0), Math.max(22, r * 2), e.hp / e.maxHp, '#e84a3c');
 }
+
 // Wie die Upgrades aussehen (Stufen werden gedeckelt, damit nichts riesig wird)
 function wallThick() { return 16 + Math.min(S.lv.wall, 6) * 4; }
 function towerH() { return Math.min(S.lv.arrow, 6) * 6; }
@@ -827,7 +919,7 @@ function drawHUD() {
   if (S.banner && phase !== 'start') {
     const a = Math.min(1, S.banner.t * 2);
     ctx.globalAlpha = a;
-    ctx.font = '700 46px Fredoka, system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.font = '700 ' + (S.banner.text.length > 24 ? 36 : 46) + 'px Fredoka, system-ui, sans-serif'; ctx.textAlign = 'center';
     ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(40,20,10,.8)';
     ctx.strokeText(S.banner.text, W / 2, 130);
     ctx.fillStyle = '#fff1c4'; ctx.fillText(S.banner.text, W / 2, 130);
