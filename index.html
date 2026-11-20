@@ -91,6 +91,9 @@ const ENEMY_TYPES = {
   ritter:   { name: 'Schwarzer Ritter', from: 7, weight: 3,  hp: 35, speed: 32, dmg: 10, coins: 15, r: 17, body: '#2b2d35', dark: '#0f1014' },
   rammbock: { name: 'Rammbock',        from: 6, weight: 1.5, hp: 45, speed: 20, dmg: 18, coins: 20, r: 22, body: '#8a5a2b', dark: '#3e2814', siege: 'ram' },
   katapult: { name: 'Katapult',        from: 8, weight: 1.2, hp: 30, speed: 22, dmg: 10, coins: 20, r: 20, body: '#9a6b3a', dark: '#4a3018', siege: 'cat' },
+  // Ab Welle 12 bzw. 14 kommen sie schon manchmal, aber schwächer. Ab Welle 30 kommen sie richtig stark und öfter.
+  hubschrauber: { name: 'Hubschrauber', from: 12, strongFrom: 30, weakWeight: 0.6, weight: 2.5, hp: 70, speed: 45, dmg: 4, coins: 30, r: 22, body: '#4f6f3c', dark: '#24361c', siege: 'heli' },
+  panzer:   { name: 'Panzerwagen',     from: 14, strongFrom: 30, weakWeight: 0.5, weight: 2,   hp: 160, speed: 16, dmg: 24, coins: 45, r: 26, body: '#6b7a4a', dark: '#38422a', siege: 'tank' },
   zyklop:   { name: 'Zyklop',          from: 9, weight: 1.2, hp: 80, speed: 18, dmg: 18, coins: 30, r: 27, body: '#c08457', dark: '#7a4a22' },
 };
 const SQUAD_SIZE = 10;     // Kämpfer pro Haus
@@ -187,6 +190,9 @@ function puff(x, y, color, n) {
   }
 }
 
+// Gegner, die aus der Ferne schießen: Reichweite, Pause zwischen den Schüssen, Dauer der Schuss-Bewegung
+const RANGED = { cat: { range: 230, cd: 3.2, anim: 0.5 }, heli: { range: 150, cd: 1.0, anim: 0.15 }, tank: { range: 260, cd: 2.8, anim: 0.3 } };
+
 // ====== Wellen ======
 function startWave() {
   S.wave++;
@@ -195,7 +201,7 @@ function startWave() {
   const count = 5 + n * 4;
   // alle Gegnerarten, die ab dieser Welle dabei sind; Goblins werden später seltener
   const pool = Object.entries(ENEMY_TYPES).filter(([, T]) => n >= T.from)
-    .map(([type, T]) => [type, type === 'goblin' ? Math.max(2, T.weight - n) : T.weight]);
+    .map(([type, T]) => [type, type === 'goblin' ? Math.max(2, T.weight - n) : (T.strongFrom && n < T.strongFrom ? T.weakWeight : T.weight)]);
   const total = pool.reduce((sum, [, w]) => sum + w, 0);
   // eine neue Gegnerart kommt in ihrer ersten Welle mindestens zweimal
   const fresh = pool.find(([type]) => ENEMY_TYPES[type].from === n && n > 1);
@@ -205,9 +211,11 @@ function startWave() {
     q.push(type);
   }
   if (fresh) { q[Math.floor(count / 3)] = fresh[0]; q[Math.floor(count * 2 / 3)] = fresh[0]; }
+  if (n === 30) { q[3] = 'hubschrauber'; q[8] = 'panzer'; q[14] = 'hubschrauber'; q[20] = 'panzer'; }
   S.queue = q;
   S.inWave = true;
   S.spawnCd = 0.5;
+  if (n === 30) { S.queue = q; S.inWave = true; S.spawnCd = 0.5; S.banner = { text: 'Welle 30: Jetzt kommen starke Hubschrauber und Panzer!', t: 3.5 }; return; }
   S.banner = fresh ? { text: 'Welle ' + n + ': Neuer Gegner: ' + ENEMY_TYPES[fresh[0]].name + '!', t: 3 }
                    : { text: 'Welle ' + n, t: 2 };
 }
@@ -221,9 +229,13 @@ function spawnEnemy(type) {
   else { x = -25; y = rnd(0, H); }
   // Gegner werden mit jeder Welle zäher und schlagen härter zu
   const hp = Math.round(T.hp * (1 + 0.3 * (S.wave - 1) + 0.015 * (S.wave - 1) * (S.wave - 1)));
-  const dmg = Math.round(T.dmg * (1 + 0.1 * (S.wave - 1)));
-  S.enemies.push({ type, x, y, hp, maxHp: hp, speed: T.speed * rnd(0.9, 1.1) * (1 + Math.min(0.3, 0.01 * (S.wave - 1))), dmg, r: T.r,
-    coins: T.coins, flies: !!T.flies, siege: T.siege || null, atkCd: 0.5, flash: 0, seed: Math.random() * 10, dir: 0, dead: false });
+  let dmg = Math.round(T.dmg * (1 + 0.1 * (S.wave - 1)));
+  // vor Welle 30 sind Hubschrauber und Panzer kleiner und schwächer
+  const weak = !!(T.strongFrom && S.wave < T.strongFrom);
+  const hpW = weak ? Math.round(hp * 0.45) : hp;
+  if (weak) dmg = Math.max(1, Math.round(dmg * 0.5));
+  S.enemies.push({ type, x, y, hp: hpW, maxHp: hpW, speed: T.speed * rnd(0.9, 1.1) * (1 + Math.min(0.3, 0.01 * (S.wave - 1))), dmg, r: weak ? Math.round(T.r * 0.8) : T.r, weak,
+    coins: weak ? Math.round(T.coins * 0.6) : T.coins, flies: !!T.flies, siege: T.siege || null, atkCd: 0.5, flash: 0, seed: Math.random() * 10, dir: 0, dead: false });
 }
 
 // ====== Schaden und Belohnung ======
@@ -400,17 +412,21 @@ function update(dt) {
     if (e.dead) continue;
     e.flash = Math.max(0, e.flash - dt);
     e.throwAnim = Math.max(0, (e.throwAnim || 0) - dt);
-    if (e.siege === 'cat') {
-      // Katapult: bleibt in sicherem Abstand stehen und schleudert Steine auf die Mauer
+    const RG = RANGED[e.siege];
+    if (RG) {
+      // Katapult, Hubschrauber und Panzer bleiben in Abstand stehen und schießen auf die Mauer
       const wp = wallPoint(e), dw = dist(e, wp);
       e.dir = Math.atan2(wp.y - e.y, wp.x - e.x);
-      if (dw > 230) { e.attacking = false; moveTo(e, wp.x, wp.y, inMoat(e) ? e.speed * 0.45 : e.speed, dt); e.dir = Math.atan2(wp.y - e.y, wp.x - e.x); }
+      if (dw > RG.range) { e.attacking = false; moveTo(e, wp.x, wp.y, inMoat(e) && e.siege !== 'heli' ? e.speed * 0.45 : e.speed, dt); e.dir = Math.atan2(wp.y - e.y, wp.x - e.x); }
       else {
         e.attacking = true;
         e.atkCd -= dt;
         if (e.atkCd <= 0) {
-          e.atkCd = 3.2; e.throwAnim = 0.5;
-          S.stones.push({ sx: e.x, sy: e.y - 10, tx: wp.x + rnd(-10, 10), ty: wp.y + rnd(-10, 10), x: e.x, y: e.y, h: 0, t: 0, dur: 1.3, dmg: e.dmg });
+          e.atkCd = RG.cd * rnd(0.85, 1.15); e.throwAnim = RG.anim;
+          const tx = wp.x + rnd(-10, 10), ty = wp.y + rnd(-10, 10);
+          if (e.siege === 'cat') S.stones.push({ sx: e.x, sy: e.y - 10, tx, ty, x: e.x, y: e.y, h: 0, t: 0, dur: 1.3, dmg: e.dmg });
+          else if (e.siege === 'heli') S.stones.push({ sx: e.x, sy: e.y, tx, ty, x: e.x, y: e.y, h: 0, t: 0, dur: 0.3, dmg: e.dmg, kind: 'bullet', h0: 34 });
+          else { S.stones.push({ sx: e.x, sy: e.y, tx, ty, x: e.x, y: e.y, h: 0, t: 0, dur: 0.5, dmg: e.dmg, kind: 'shell', h0: 14 }); puff(e.x + Math.cos(e.dir) * 30, e.y + Math.sin(e.dir) * 30 - 14, '#ffb34d', 5); }
         }
       }
       continue;
@@ -450,7 +466,7 @@ function update(dt) {
   if (S.lv.bridge >= 2) {
     const gp = { x: GATE.x, y: GATE.y + wallThick() / 2 + 10 };
     for (const e of S.enemies) {
-      if (e.dead || e.flies || dist(e, gp) > 70 + e.r) continue;
+      if (e.dead || e.flies || e.siege === 'heli' || dist(e, gp) > 70 + e.r) continue;
       e.spike = (e.spike || 0) + dt;
       if (e.spike >= 0.5) { e.spike = 0; hitEnemy(e, S.lv.bridge - 1, null); puff(e.x, e.y, '#cccccc', 3); }
     }
@@ -517,10 +533,14 @@ function update(dt) {
     st.t += dt;
     const k = Math.min(1, st.t / st.dur);
     st.x = st.sx + (st.tx - st.sx) * k; st.y = st.sy + (st.ty - st.sy) * k;
-    st.h = Math.sin(k * Math.PI) * 120;          // Flugbogen
+    if (st.kind === 'bullet') st.h = st.h0 * (1 - k);                                  // Schuss vom Hubschrauber
+    else if (st.kind === 'shell') st.h = st.h0 * (1 - k) + Math.sin(k * Math.PI) * 18;   // Granate vom Panzer
+    else st.h = Math.sin(k * Math.PI) * 120;          // Flugbogen
     if (k >= 1) {
-      st.done = true; S.hp -= st.dmg; S.shake = 0.3;
-      puff(st.tx, st.ty, '#8d8d8d', 14); addText(st.tx, st.ty - 20, 'BUMM!', '#ffb36b');
+      st.done = true; S.hp -= st.dmg;
+      if (st.kind === 'bullet') { puff(st.tx, st.ty, '#ffd34d', 3); S.shake = Math.max(S.shake, 0.08); }
+      else if (st.kind === 'shell') { S.shake = 0.45; puff(st.tx, st.ty, '#ff8a2a', 18); puff(st.tx, st.ty, '#555555', 10); addText(st.tx, st.ty - 20, 'KAWUMM!', '#ff8a2a'); }
+      else { S.shake = 0.3; puff(st.tx, st.ty, '#8d8d8d', 14); addText(st.tx, st.ty - 20, 'BUMM!', '#ffb36b'); }
     }
   }
   S.stones = S.stones.filter(st => !st.done);
@@ -920,6 +940,44 @@ function drawSiege(e) {
     ctx.fillStyle = '#c9b48a'; ctx.fillRect(-9 * u, -14.5 * u, 18 * u, 2.5 * u);       // Fell oben drauf
     // Räder
     wheel(-8 * u, 6 * u, 3.6 * u); wheel(8 * u, 6 * u, 3.6 * u);
+  } else if (e.siege === 'heli') {
+    // Hubschrauber: schwebt in der Luft, Rotor dreht sich, vorne ein Maschinengewehr
+    ctx.translate(0, -26 * u + Math.sin(S.time * 3 + e.seed) * 2 * u);
+    ctx.fillStyle = dark; ctx.fillRect(-23 * u, -2.5 * u, 16 * u, 3.4 * u);                       // Heckausleger
+    ctx.beginPath(); ctx.moveTo(-23 * u, -2.5 * u); ctx.lineTo(-26 * u, -8 * u); ctx.lineTo(-21 * u, -2.5 * u); ctx.closePath(); ctx.fill();
+    const tr = S.time * 40;
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-24 * u + Math.cos(tr) * 4 * u, -4 * u + Math.sin(tr) * 4 * u); ctx.lineTo(-24 * u - Math.cos(tr) * 4 * u, -4 * u - Math.sin(tr) * 4 * u); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-8 * u, 9 * u); ctx.lineTo(10 * u, 9 * u); ctx.moveTo(-4 * u, 5 * u); ctx.lineTo(-5 * u, 9 * u); ctx.moveTo(4 * u, 5 * u); ctx.lineTo(5 * u, 9 * u); ctx.stroke();  // Kufen
+    ctx.fillStyle = '#2b2b2b'; ctx.fillRect(7 * u, 3 * u, 9 * u, 1.8 * u);                           // Maschinengewehr
+    if (e.throwAnim > 0) blob(17 * u, 3.9 * u, 3 * u, 2.2 * u, '#ffd34d');
+    blob(0, 0, 11 * u, 7 * u, wood, dark, 2);                                                      // Rumpf
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(-3 * u, 0, 2.2 * u, 0, Math.PI * 2); ctx.fill();   // Abzeichen
+    ctx.fillStyle = '#c0141c'; ctx.beginPath(); ctx.arc(-3 * u, 0, 1.2 * u, 0, Math.PI * 2); ctx.fill();
+    blob(6 * u, -1.5 * u, 4.5 * u, 3.6 * u, '#9fe8ff', '#2a6a8a', 1);                              // Cockpit
+    ctx.fillStyle = 'rgba(30,30,30,.22)'; ctx.beginPath(); ctx.ellipse(0, -9 * u, 23 * u, 3.4 * u, 0, 0, Math.PI * 2); ctx.fill();
+    const ra = S.time * 25;
+    ctx.strokeStyle = '#222'; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.moveTo(-Math.cos(ra) * 23 * u, -9 * u - Math.sin(ra) * 2 * u); ctx.lineTo(Math.cos(ra) * 23 * u, -9 * u + Math.sin(ra) * 2 * u); ctx.stroke();
+    blob(0, -8 * u, 1.6 * u, 1.6 * u, '#444');
+  } else if (e.siege === 'tank') {
+    // Panzerwagen: Ketten, Panzerung und ein Geschütz oben drauf, das beim Schuss zurückruckt
+    ctx.fillStyle = '#2b2b2b'; roundRect(-16 * u, 0, 32 * u, 9 * u, 4.5 * u); ctx.fill();          // Ketten
+    for (let i = -3; i <= 3; i++) blob(i * 4.4 * u, 4.5 * u, 2 * u, 2 * u, '#6b6b6b');
+    ctx.strokeStyle = '#4a4a4a'; ctx.lineWidth = 1;
+    const off = (roll * 12) % 4;
+    for (let x = -15; x < 14; x += 4) { ctx.beginPath(); ctx.moveTo((x + off) * u, 0); ctx.lineTo((x + off) * u, 1.6 * u); ctx.stroke(); }
+    ctx.fillStyle = wood; ctx.strokeStyle = dark; ctx.lineWidth = 2;                                // Wanne
+    ctx.beginPath(); ctx.moveTo(-15 * u, 1 * u); ctx.lineTo(-12 * u, -6 * u); ctx.lineTo(12 * u, -6 * u); ctx.lineTo(16 * u, 1 * u); ctx.closePath(); ctx.fill(); ctx.stroke();
+    const rec = e.throwAnim > 0 ? e.throwAnim / 0.3 * 4 * u : 0;
+    ctx.fillStyle = '#2f2f2f'; ctx.fillRect(3 * u - rec, -11.5 * u, 19 * u, 3.2 * u);                // Kanonenrohr
+    ctx.fillRect(20 * u - rec, -12.2 * u, 3 * u, 4.6 * u);
+    if (e.throwAnim > 0.15) blob(25 * u, -10 * u, 4.5 * u, 3.5 * u, '#ffb34d');
+    blob(0, -9 * u, 8.5 * u, 5.5 * u, wood, dark, 2);                                              // Turm
+    blob(-2 * u, -13.5 * u, 3.2 * u, 1.6 * u, dark);                                               // Luke
+    ctx.fillStyle = '#ffffff'; ctx.beginPath();
+    for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, rr = (k % 2 ? 1 : 2.4) * u; ctx.lineTo(-7 * u + Math.cos(a) * rr, -2.5 * u + Math.sin(a) * rr); }
+    ctx.closePath(); ctx.fill();
   } else {
     // Katapult: Holzgestell auf Rädern, Wurfarm mit Stein
     const k = e.throwAnim > 0 ? (0.5 - e.throwAnim) / 0.5 : 1;
@@ -946,7 +1004,7 @@ function drawSiege(e) {
     wheel(-8 * u, 6 * u, 3.2 * u); wheel(8 * u, 6 * u, 3.2 * u);
   }
   ctx.restore();
-  if (e.hp < e.maxHp) hpBar(e.x, e.y - 20 * u, Math.max(28, e.r * 2), e.hp / e.maxHp, '#e84a3c');
+  if (e.hp < e.maxHp) hpBar(e.x, e.y - (e.siege === 'heli' ? 46 : 20) * u, Math.max(28, e.r * 2), e.hp / e.maxHp, '#e84a3c');
 }
 function drawEnemy(e) {
   if (e.siege) return drawSiege(e);
@@ -1456,6 +1514,17 @@ function draw() {
   }
   // Katapult-Steine
   for (const st of S.stones) {
+    if (st.kind === 'bullet') {
+      const dx = st.tx - st.sx, dy = st.ty - st.sy, d = Math.hypot(dx, dy) || 1;
+      ctx.strokeStyle = '#ffd34d'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(st.x, st.y - st.h); ctx.lineTo(st.x - dx / d * 12, st.y - st.h - dy / d * 12 + 3); ctx.stroke();
+      continue;
+    }
+    if (st.kind === 'shell') {
+      blob(st.x, st.y - st.h, 7, 7, 'rgba(255,140,40,.5)');
+      blob(st.x, st.y - st.h, 4.5, 4.5, '#2f2f2f', '#111', 1);
+      continue;
+    }
     ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(st.x, st.y, 7, 3, 0, 0, Math.PI * 2); ctx.fill();
     blob(st.x, st.y - st.h, 7, 7, '#8d8d8d', '#555', 1.5);
     ctx.fillStyle = '#a8a8a8'; ctx.beginPath(); ctx.arc(st.x - 2, st.y - st.h - 2, 2.5, 0, Math.PI * 2); ctx.fill();
@@ -1960,6 +2029,7 @@ function buildSiege(type) {
   const u = 0.1, T = ENEMY_TYPES[type], g = new THREE.Group(), parts = {};
   const wood = M(T.body), dark = M(T.dark);
   parts.wheels = [];
+  if (type === 'hubschrauber' || type === 'panzer') { buildModern(type, g, parts, wood, dark); g.userData.parts = parts; return g; }
   for (const x of [-8, 8]) for (const z of [-6.5, 6.5]) {
     const wh = mesh(G.cyl(3.6 * u, 3.6 * u, 1.5 * u, 14), M('#5a3a1a'), x * u, 3.6 * u, z * u);
     wh.rotation.x = Math.PI / 2; g.add(wh); parts.wheels.push(wh);
@@ -2000,6 +2070,45 @@ function buildSiege(type) {
   return g;
 }
 
+// Hubschrauber und Panzerwagen in 3D
+function buildModern(type, g, parts, body, dark) {
+  const u = 0.1;
+  if (type === 'hubschrauber') {
+    const h = new THREE.Group(); h.position.y = 14 * u; g.add(h); parts.heli = h;
+    const hull = mesh(G.sph(8 * u, 14), body, 0, 0, 0); hull.scale.set(1.4, 0.9, 0.9); h.add(hull);
+    const glass = mesh(G.sph(5 * u, 12), M('#9fe8ff', '#103040'), 6 * u, 1.5 * u, 0); glass.scale.set(1, 0.8, 1.2); h.add(glass);
+    h.add(mesh(G.box(18 * u, 2.4 * u, 2.4 * u), dark, -17 * u, 1 * u, 0));                       // Heckausleger
+    h.add(mesh(G.box(2 * u, 6 * u, 0.8 * u), dark, -26 * u, 4 * u, 0));                          // Seitenflosse
+    const tail = new THREE.Group(); tail.position.set(-26 * u, 4 * u, 1 * u); h.add(tail); parts.tailRotor = tail;
+    tail.add(mesh(G.box(0.6 * u, 8 * u, 0.3 * u), M('#333333'), 0, 0, 0, true));
+    for (const z of [-4, 4]) {                                                                   // Kufen
+      h.add(mesh(G.box(20 * u, 0.6 * u, 0.6 * u), M('#333333'), 0, -9 * u, z * u, true));
+      for (const x of [-5, 5]) h.add(mesh(G.box(0.5 * u, 4 * u, 0.5 * u), M('#333333'), x * u, -7 * u, z * u, true));
+    }
+    const gun = mesh(G.cyl(0.6 * u, 0.6 * u, 8 * u, 6), M('#2b2b2b'), 12 * u, -3 * u, 0, true); gun.rotation.z = Math.PI / 2; h.add(gun);   // Maschinengewehr
+    const flash = mesh(G.sph(1.6 * u, 8), M('#ffd34d', '#ffaa00'), 17 * u, -3 * u, 0, true); flash.visible = false; h.add(flash); parts.flash = flash;
+    h.add(mesh(G.cyl(0.8 * u, 0.8 * u, 4 * u, 8), M('#444444'), 0, 8 * u, 0, true));
+    const rotor = new THREE.Group(); rotor.position.y = 10 * u; h.add(rotor); parts.rotor = rotor;
+    for (const a of [0, Math.PI / 2]) { const b = mesh(G.box(46 * u, 0.4 * u, 1.8 * u), M('#222222'), 0, 0, 0); b.rotation.y = a; rotor.add(b); }
+  } else {
+    for (const z of [-7, 7]) {                                                                   // Ketten
+      g.add(mesh(G.box(32 * u, 8 * u, 4.5 * u), M('#2b2b2b'), 0, 4 * u, z * u));
+      for (let x = -12; x <= 12; x += 6) {
+        const wh = mesh(G.cyl(3 * u, 3 * u, 4.8 * u, 10), M('#6b6b6b'), x * u, 4 * u, z * u, true); wh.rotation.x = Math.PI / 2; g.add(wh); parts.wheels.push(wh);
+      }
+    }
+    const hull = mesh(G.box(30 * u, 6 * u, 13 * u), body, 0, 10 * u, 0); g.add(hull);
+    const front = mesh(G.box(10 * u, 3 * u, 13.2 * u), body, 13 * u, 9 * u, 0); front.rotation.z = 0.5; g.add(front);
+    g.add(mesh(new THREE.OctahedronGeometry(2 * u), M('#ffffff'), -6 * u, 10 * u, 6.6 * u, true));
+    const turret = new THREE.Group(); turret.position.y = 15 * u; g.add(turret); parts.turret = turret;
+    const top = mesh(G.cyl(6.5 * u, 7.5 * u, 5 * u, 14), body, 0, 0, 0); turret.add(top);
+    turret.add(mesh(G.cyl(2.5 * u, 2.5 * u, 1.2 * u, 10), dark, -2 * u, 3 * u, 0));             // Luke
+    const barrel = new THREE.Group(); turret.add(barrel); parts.barrel = barrel;
+    const b = mesh(G.cyl(1.3 * u, 1.3 * u, 20 * u, 10), M('#2f2f2f'), 15 * u, 0.5 * u, 0); b.rotation.z = Math.PI / 2; barrel.add(b);
+    const muzzle = mesh(G.cyl(2 * u, 2 * u, 3 * u, 10), M('#2f2f2f'), 25 * u, 0.5 * u, 0); muzzle.rotation.z = Math.PI / 2; barrel.add(muzzle);
+    const flash = mesh(G.sph(3 * u, 8), M('#ffb34d', '#ff7700'), 28 * u, 0.5 * u, 0, true); flash.visible = false; barrel.add(flash); parts.flash = flash;
+  }
+}
 // ---------- Jedes Bild ----------
 function syncList(list, kind, build, upd) {
   for (const o of list) {
@@ -2036,7 +2145,7 @@ function render3d() {
   syncList(S.enemies, 'enemy', e => e.flies ? buildBat() : e.siege ? buildSiege(e.type) : buildFigure(e), (e, m) => {
     const sc = e.r / 12 * (e.flash > 0 ? 1.12 : 1);
     m.scale.setScalar(sc);
-    const gy = e.flies ? 2.2 + Math.sin(S.time * 8 + e.seed) * 0.3 : (e.siege ? Math.max(0, groundY(e.x, e.y)) + (groundY(e.x, e.y) < 0 ? -0.5 : 0) : groundY(e.x, e.y));
+    const gy = e.flies ? 2.2 + Math.sin(S.time * 8 + e.seed) * 0.3 : e.siege === 'heli' ? 1.6 + Math.sin(S.time * 3 + e.seed) * 0.25 : (e.siege ? Math.max(0, groundY(e.x, e.y)) + (groundY(e.x, e.y) < 0 ? -0.5 : 0) : groundY(e.x, e.y));
     m.position.set(X3(e.x), gy, Z3(e.y));
     m.rotation.y = -e.dir;
     const p = m.userData.parts;
@@ -2045,6 +2154,9 @@ function render3d() {
       const moving = m.userData.lx !== undefined && Math.hypot(e.x - m.userData.lx, e.y - m.userData.ly) > 0.02;
       m.userData.lx = e.x; m.userData.ly = e.y;
       if (moving) p.wheels.forEach(w => { w.rotation.y += 0.08; });
+      if (p.rotor) { p.rotor.rotation.y += 0.6; p.tailRotor.rotation.z += 0.8; }
+      if (p.barrel) p.barrel.position.x = e.throwAnim > 0 ? -e.throwAnim / 0.3 * 0.4 : 0;
+      if (p.flash) p.flash.visible = e.throwAnim > (e.siege === 'tank' ? 0.15 : 0.05);
       if (p.log) p.log.position.x = e.throwAnim > 0 ? Math.sin((0.5 - e.throwAnim) / 0.5 * Math.PI) * 0.6 : 0;
       if (p.arm) {
         const k = e.throwAnim > 0 ? (0.5 - e.throwAnim) / 0.5 : 1;
@@ -2096,7 +2208,8 @@ function render3d() {
     m.rotation.set(0, -a.dir, -Math.atan2((top - 1.5), m.userData.d0 * K) * 0.8);
   });
   // Katapult-Steine
-  syncList(S.stones, 'stone', () => mesh(G.sph(0.8, 10), M('#8d8d8d')), (st, m) => {
+  syncList(S.stones, 'stone', st => st.kind === 'bullet' ? mesh(G.sph(0.25, 6), M('#ffd34d', '#aa7700'), 0, 0, 0, true)
+      : st.kind === 'shell' ? mesh(G.sph(0.45, 8), M('#2f2f2f', '#552200'), 0, 0, 0, true) : mesh(G.sph(0.8, 10), M('#8d8d8d')), (st, m) => {
     m.position.set(X3(st.x), 1 + st.h * K, Z3(st.y)); m.rotation.x += 0.2;
   });
   // Münzen
@@ -2134,7 +2247,7 @@ function drawOverlay3d() {
   ctx.clearRect(0, 0, W, H);
   // Lebensbalken über Gegnern und Rittern
   for (const e of S.enemies) if (e.hp < e.maxHp) {
-    const p = project3d(e.x, e.y, (e.flies ? 2.2 : Math.max(0, groundY(e.x, e.y))) + e.r / 12 * (e.siege ? 2.4 : 3.6));
+    const p = project3d(e.x, e.y, (e.flies ? 2.2 : Math.max(0, groundY(e.x, e.y))) + e.r / 12 * (e.siege === 'heli' ? 4.2 : e.siege ? 2.4 : 3.6));
     hpBar(p.x, p.y, Math.max(22, e.r * 1.6), e.hp / e.maxHp, '#e84a3c');
   }
   for (const s of S.soldiers) if (s.hp < s.maxHp) {
