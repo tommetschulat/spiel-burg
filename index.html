@@ -228,8 +228,10 @@ function spawnEnemy(type) {
   else if (side === 2) { x = rnd(0, W); y = H + 25; }
   else { x = -25; y = rnd(0, H); }
   // Gegner werden mit jeder Welle zäher und schlagen härter zu
-  const hp = Math.round(T.hp * (1 + 0.3 * (S.wave - 1) + 0.015 * (S.wave - 1) * (S.wave - 1)));
-  let dmg = Math.round(T.dmg * (1 + 0.1 * (S.wave - 1)));
+  // ab Welle 20 werden sie zusätzlich ein bisschen stärker: pro Welle +4 % Lebenspunkte und +2 % Schaden
+  const late = Math.max(0, S.wave - 19);
+  const hp = Math.round(T.hp * (1 + 0.3 * (S.wave - 1) + 0.015 * (S.wave - 1) * (S.wave - 1)) * (1 + 0.04 * late));
+  let dmg = Math.round(T.dmg * (1 + 0.1 * (S.wave - 1)) * (1 + 0.02 * late));
   // vor Welle 30 sind Hubschrauber und Panzer kleiner und schwächer
   const weak = !!(T.strongFrom && S.wave < T.strongFrom);
   const hpW = weak ? Math.round(hp * 0.45) : hp;
